@@ -3,31 +3,76 @@ name: 🚀 Deploy to AlwaysData
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch: {}
+
+env:
+  AD_PATH: ${{ secrets.AD_PATH }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🐍 Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: 🚀 Deploy to AlwaysData
-      uses: appleboy/ssh-action@v0.1.5
-      with:
-        host: ${{ secrets.ALWAYSDATA_HOST }}
-        username: ${{ secrets.ALWAYSDATA_USERNAME }}
-        key: ${{ secrets.ALWAYSDATA_SSH_KEY }}
-        script: |
-          cd ~/game-extraction || { git clone ${{ github.server_url }}/${{ github.repository }}.git ~/game-extraction && cd ~/game-extraction; }
-          git pull origin main
-          python3 -m pip install --user -r requirements.txt --upgrade
-          python3 scripts/setup_alwaysdata.py --auto-deploy
-          python3 scripts/run_extraction.py --test
-          echo "✅ Deployment completed!"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # (facultatif) Petit ping pour vérifier la connexion SSH
+      - name: Test SSH connectivity
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.AD_HOST }}
+          username: ${{ secrets.AD_USER }}
+          key: ${{ secrets.AD_SSH_KEY }}
+          port: 22
+          script: |
+            echo "Connected to $(hostname) as $(whoami)"
+            mkdir -p "${{ env.AD_PATH }}"
+
+      # Copie des fichiers du repo vers le serveur (exclut .git et .github)
+      - name: Upload files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.AD_HOST }}
+          username: ${{ secrets.AD_USER }}
+          key: ${{ secrets.AD_SSH_KEY }}
+          port: 22
+          source: |
+            ./*
+            !.git/**
+            !.github/**
+          target: ${{ env.AD_PATH }}
+
+      # Étapes finales côté serveur (venv + pip install si besoin, puis vérifications)
+      - name: Finalize on server
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.AD_HOST }}
+          username: ${{ secrets.AD_USER }}
+          key: ${{ secrets.AD_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ env.AD_PATH }}"
+            echo "Deployed from GitHub at $(date -u)" > _from_github.txt
+
+            # (optionnel) Python: crée un venv et installe les deps si requirements.txt existe
+            if [ -f requirements.txt ]; then
+              if [ ! -d .venv ]; then python3 -m venv .venv; fi
+              . .venv/bin/activate
+              pip install --upgrade pip
+              pip install -r requirements.txt
+            fi
+
+            # (option) Node: si package.json existe
+            if [ -f package.json ]; then
+              if command -v npm >/dev/null 2>&1; then
+                npm ci || npm install
+                npm run build || true
+              fi
+            fi
+
+            # Affiche le contenu pour contrôle
+            ls -al
+
+            echo "✅ Deploy finished"
