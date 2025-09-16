@@ -1,0 +1,33 @@
+name: 🚀 Deploy to AlwaysData
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: 🚀 Deploy to AlwaysData
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.ALWAYSDATA_HOST }}
+        username: ${{ secrets.ALWAYSDATA_USERNAME }}
+        key: ${{ secrets.ALWAYSDATA_SSH_KEY }}
+        script: |
+          cd ~/game-extraction || { git clone ${{ github.server_url }}/${{ github.repository }}.git ~/game-extraction && cd ~/game-extraction; }
+          git pull origin main
+          python3 -m pip install --user -r requirements.txt --upgrade
+          python3 scripts/setup_alwaysdata.py --auto-deploy
+          python3 scripts/run_extraction.py --test
+          echo "✅ Deployment completed!"

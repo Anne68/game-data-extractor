@@ -1,0 +1,50 @@
+name: ⏰ Scheduled Data Extraction
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 6h Paris
+    - cron: '0 16 * * *'  # 18h Paris  
+    - cron: '0 10 * * *'  # 12h Paris
+    - cron: '0 0 * * 0'   # 2h Paris dimanche
+  workflow_dispatch:
+    inputs:
+      extraction_type:
+        description: 'Type d\'extraction'
+        required: true
+        default: 'games'
+        type: choice
+        options:
+        - games
+        - prices
+        - full
+        - maintenance
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Run extraction on AlwaysData
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.ALWAYSDATA_HOST }}
+        username: ${{ secrets.ALWAYSDATA_USERNAME }}
+        key: ${{ secrets.ALWAYSDATA_SSH_KEY }}
+        script: |
+          cd ~/game-extraction
+          
+          if [[ "${{ github.event.schedule }}" == "0 4 * * *" ]] || [[ "${{ github.event.schedule }}" == "0 16 * * *" ]]; then
+            python3 scripts/run_extraction.py --games-only
+          elif [[ "${{ github.event.schedule }}" == "0 10 * * *" ]]; then
+            python3 scripts/run_extraction.py --prices-only
+          elif [[ "${{ github.event.schedule }}" == "0 0 * * 0" ]]; then
+            python3 scripts/run_extraction.py --maintenance
+          elif [[ "${{ github.event.inputs.extraction_type }}" == "games" ]]; then
+            python3 scripts/run_extraction.py --games-only
+          elif [[ "${{ github.event.inputs.extraction_type }}" == "prices" ]]; then
+            python3 scripts/run_extraction.py --prices-only
+          elif [[ "${{ github.event.inputs.extraction_type }}" == "full" ]]; then
+            python3 scripts/run_extraction.py --full
+          elif [[ "${{ github.event.inputs.extraction_type }}" == "maintenance" ]]; then
+            python3 scripts/run_extraction.py --maintenance
+          fi

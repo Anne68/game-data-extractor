@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: games_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: games_db
+      MYSQL_USER: games_user
+      MYSQL_PASSWORD: games_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - games_network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: games_app
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=games_user
+      - DB_PASSWORD=games_password
+      - DB_NAME=games_db
+      - RAWG_API_KEY=${RAWG_API_KEY}
+      - LOG_LEVEL=DEBUG
+      - HEADLESS_MODE=true
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - mysql
+    networks:
+      - games_network
+    command: tail -f /dev/null  # Keep container running for development
+
+  adminer:
+    image: adminer
+    container_name: games_adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql
+    networks:
+      - games_network
+
+volumes:
+  mysql_data:
+
+networks:
+  games_network:
+    driver: bridge

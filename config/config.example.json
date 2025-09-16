@@ -1,0 +1,41 @@
+{
+  "database": {
+    "host": "mysql-anne.alwaysdata.net",
+    "port": 3306,
+    "user": "anne",
+    "password": "YOUR_PASSWORD_HERE",
+    "database": "Vicky2@18"
+  },
+  "api": {
+    "rawg_api_key": "a596903618f14aeeb1fcbbb790180dd5",
+    "games_per_extraction": 500,
+    "page_size": 40,
+    "rate_limit_delay": 1
+  },
+  "scraping": {
+    "enabled": true,
+    "max_games_per_session": 50,
+    "delay_between_requests": 2,
+    "retry_attempts": 3,
+    "headless": true
+  },
+  "scheduling": {
+    "games_extraction_hours": ["06:00", "18:00"],
+    "prices_scraping_hours": ["12:00"],
+    "timezone": "Europe/Paris"
+  },
+  "notifications": {
+    "discord_webhook": "https://discordapp.com/api/webhooks/1417424556783697950/mQR0dloyGcQr27snqvFEhKntCoFO1aLXPBKiMqZkpy_NieDq9ve2uPLO_sYYcqw7vOAc",
+    "email_enabled": false,
+    "recipients": ["vicky69200@gmail.com"]
+  },
+  "logging": {
+    "level": "INFO",
+    "max_log_files": 7,
+    "log_file": "logs/extraction.log"
+  },
+  "maintenance": {
+    "cleanup_days": 30,
+    "backup_retention_days": 7
+  }
+}
