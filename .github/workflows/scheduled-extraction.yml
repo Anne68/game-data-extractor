@@ -26,9 +26,9 @@ jobs:
     - name: 🚀 Run extraction on AlwaysData
       uses: appleboy/ssh-action@v0.1.5
       with:
-        host: ${{ secrets.ALWAYSDATA_HOST }}
-        username: ${{ secrets.ALWAYSDATA_USERNAME }}
-        key: ${{ secrets.ALWAYSDATA_SSH_KEY }}
+        host: ${{ secrets.AD_HOST }}
+        username: ${{ secrets.AD_USER }}
+        key: ${{ secrets.AD_SSH_KEY }}
         script: |
           cd ~/game-extraction
           
