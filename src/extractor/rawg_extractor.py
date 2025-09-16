@@ -15,7 +15,7 @@ class RawgExtractor:
     """Extracteur de données RAWG.io"""
     
     def __init__(self, api_key: str = None):
-        from ..utils.config import ConfigManager
+        from .utils.config import ConfigManager
         
         config = ConfigManager()
         api_config = config.get_api_config()
