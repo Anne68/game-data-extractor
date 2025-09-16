@@ -19,7 +19,7 @@ jobs:
           [ -n "${{ secrets.AD_HOST }}" ]    || { echo "❌ AD_HOST missing"; exit 1; }
           [ -n "${{ secrets.AD_USER }}" ]    || { echo "❌ AD_USER missing"; exit 1; }
           [ -n "${{ secrets.AD_PATH }}" ]    || { echo "❌ AD_PATH missing"; exit 1; }
-          [ -n "${{ secrets.ADD_SSH_KEY }}" ] || { echo "❌ ADD_SSH_KEY missing"; exit 1; }
+          [ -n "${{ secrets.AD_SSH_KEY }}" ] || { echo "❌ ADD_SSH_KEY missing"; exit 1; }
           echo "✅ All secrets are present"
 
       # Setup SSH key with proper permissions
