@@ -15,7 +15,7 @@ class DatabaseManager:
     """Gestionnaire de base de données MySQL"""
     
     def __init__(self):
-        from ..utils.config import ConfigManager
+        from .utils.config import ConfigManager
         
         config = ConfigManager()
         self.db_config = config.get_database_config()
