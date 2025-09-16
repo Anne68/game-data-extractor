@@ -25,7 +25,7 @@ ALWAYSDATA_SSH_KEY=votre-cle-ssh-privee
 DB_HOST=mysql-anne.alwaysdata.net
 DB_USER=anne
 DB_PASSWORD=Vicky2@18
-DB_NAME=Vicky2@18
+DB_NAME=anne-games-db
 RAWG_API_KEY=a596903618f14aeeb1fcbbb790180dd5
 ```
 
