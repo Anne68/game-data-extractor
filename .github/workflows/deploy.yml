@@ -1,4 +1,4 @@
-name: 🚀 Deploy to AlwaysData (native SSH)
+name: 🚀 Deploy to AlwaysData (FIXED)
 on:
   push:
     branches: [ main ]
@@ -18,7 +18,6 @@ jobs:
           set -e
           [ -n "${{ secrets.AD_HOST }}" ]    || { echo "❌ AD_HOST missing"; exit 1; }
           [ -n "${{ secrets.AD_USER }}" ]    || { echo "❌ AD_USER missing"; exit 1; }
-          [ -n "${{ secrets.AD_PATH }}" ]    || { echo "❌ AD_PATH missing"; exit 1; }
           [ -n "${{ secrets.AD_SSH_KEY }}" ] || { echo "❌ AD_SSH_KEY missing"; exit 1; }
           echo "✅ All secrets are present"
 
@@ -28,85 +27,59 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.AD_SSH_KEY }}
         run: |
-          # Create SSH directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
-          # Write the private key
           echo "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          
-          # Add host to known_hosts to avoid prompt
           ssh-keyscan -H ${{ secrets.AD_HOST }} >> ~/.ssh/known_hosts
-          
-          # Verify key format
-          echo "🔑 SSH key info:"
-          head -n 1 ~/.ssh/id_deploy
-          echo "..."
-          tail -n 1 ~/.ssh/id_deploy
 
-      # Test SSH connection with detailed debugging
-      - name: Test SSH connectivity
-        shell: bash
-        run: |
-          echo "🔍 Testing SSH connection with detailed debugging..."
-          
-          # Show the public key that needs to be added to AlwaysData
-          echo "🔑 PUBLIC KEY TO ADD TO ALWAYSDATA:"
-          echo "================================================"
-          ssh-keygen -y -f ~/.ssh/id_deploy
-          echo "================================================"
-          echo ""
-          echo "📋 INSTRUCTIONS:"
-          echo "1. Copy the public key above (starts with ssh-ed25519)"
-          echo "2. Log into your AlwaysData admin panel"
-          echo "3. Go to SSH > SSH Keys section"
-          echo "4. Add the public key above"
-          echo "5. Re-run this workflow after adding the key"
-          echo ""
-          
-          # First, try a simple connection test
-          echo "Step 1: Basic connection test"
-          ssh -v -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes \
-              ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-              "echo 'Connection successful'; whoami; hostname" 2>&1 || {
-              echo "❌ SSH connection failed. This is expected if the public key isn't added to AlwaysData yet."
-              echo ""
-              echo "🔧 TROUBLESHOOTING:"
-              echo "- Make sure you've added the PUBLIC key (shown above) to your AlwaysData SSH keys"
-              echo "- Check that AD_USER (${{ secrets.AD_USER }}) is correct"
-              echo "- Check that AD_HOST (${{ secrets.AD_HOST }}) is correct"
-              echo ""
-              
-              # Check if we can reach the host
-              echo "Step 2: Testing host connectivity"
-              nc -zv ${{ secrets.AD_HOST }} 22 2>&1 && echo "✅ Host is reachable on port 22" || echo "❌ Host unreachable on port 22"
-              
-              exit 1
-          }
-          
-          # If connection works, create test directory and file
-          echo "✅ SSH connection successful, setting up deployment structure..."
-          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no \
-              ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-              "mkdir -p '${{ secrets.AD_PATH }}' && \
-               echo 'GitHub Actions deployment test at' \$(date -u) > '${{ secrets.AD_PATH }}/_github_deploy.txt' && \
-               echo '📁 Target directory created successfully'"
-
-      # Deploy files using rsync with SSH key
+      # Deploy with rsync to the correct path
       - name: Deploy with rsync
         shell: bash
         run: |
-          echo "🚀 Starting deployment..."
+          echo "🚀 Starting deployment to ~/game-extraction..."
           rsync -avz --delete --progress \
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'node_modules/' \
             --exclude '*.log' \
+            --exclude '__pycache__/' \
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no" \
-            ./ ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}:${{ secrets.AD_PATH }}/
+            ./ ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}:~/game-extraction/
           echo "✅ Deployment completed"
+
+      # Setup environment on AlwaysData
+      - name: Setup AlwaysData environment
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.AD_HOST }}
+          username: ${{ secrets.AD_USER }}
+          key: ${{ secrets.AD_SSH_KEY }}
+          script: |
+            cd ~/game-extraction
+            
+            echo "🔧 Setting up environment..."
+            
+            # Install Python dependencies
+            python3 -m pip install --user -r requirements.txt
+            
+            # Create necessary directories
+            mkdir -p logs data config
+            
+            # Set executable permissions on scripts
+            chmod +x scripts/*.py
+            
+            # Copy example config if needed
+            if [ ! -f config/config.json ] && [ -f config/config.example.json ]; then
+              cp config/config.example.json config/config.json
+              echo "📋 Config example copied"
+            fi
+            
+            # Test the installation
+            echo "🧪 Testing installation..."
+            python3 scripts/run_extraction.py --help
+            
+            echo "✅ Environment setup completed"
 
       # Verify deployment
       - name: Verify deployment
@@ -115,11 +88,14 @@ jobs:
           echo "🔍 Verifying deployment..."
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no \
             ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-            "echo '📂 Contents of target directory:'; \
-             ls -la '${{ secrets.AD_PATH }}' | head -20; \
+            "echo '📂 Project structure:'; \
+             ls -la ~/game-extraction/; \
              echo; \
-             echo '📄 GitHub deployment marker:'; \
-             cat '${{ secrets.AD_PATH }}/_github_deploy.txt' 2>/dev/null || echo 'Marker file not found'"
+             echo '🐍 Scripts directory:'; \
+             ls -la ~/game-extraction/scripts/; \
+             echo; \
+             echo '⚙️ Config directory:'; \
+             ls -la ~/game-extraction/config/ 2>/dev/null || echo 'Config dir not found'"
 
       # Cleanup
       - name: Cleanup
