@@ -5,19 +5,22 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
-env:
-  AD_PATH: ${{ secrets.AD_PATH }}
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # (facultatif) Petit ping pour vérifier la connexion SSH
-      - name: Test SSH connectivity
+      - name: ✅ Validate Secrets
+        run: |
+          [ -z "${{ secrets.AD_HOST }}" ] && echo "❌ AD_HOST is empty" && exit 1 || echo "✅ AD_HOST OK"
+          [ -z "${{ secrets.AD_USER }}" ] && echo "❌ AD_USER is empty" && exit 1 || echo "✅ AD_USER OK"
+          [ -z "${{ secrets.AD_PATH }}" ] && echo "❌ AD_PATH is empty" && exit 1 || echo "✅ AD_PATH OK"
+          [ -z "${{ secrets.AD_SSH_KEY }}" ] && echo "❌ AD_SSH_KEY is empty" && exit 1 || echo "✅ AD_SSH_KEY OK"
+
+      - name: 🔑 Test SSH connectivity
         uses: appleboy/ssh-action@v0.1.5
         with:
           host: ${{ secrets.AD_HOST }}
@@ -25,11 +28,9 @@ jobs:
           key: ${{ secrets.AD_SSH_KEY }}
           port: 22
           script: |
-            echo "Connected to $(hostname) as $(whoami)"
-            mkdir -p "${{ env.AD_PATH }}"
+            echo "✅ Connected to $(hostname) as $(whoami)"
 
-      # Copie des fichiers du repo vers le serveur (exclut .git et .github)
-      - name: Upload files via SCP
+      - name: 📂 Upload files via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.AD_HOST }}
@@ -40,10 +41,9 @@ jobs:
             ./*
             !.git/**
             !.github/**
-          target: ${{ env.AD_PATH }}
+          target: ${{ secrets.AD_PATH }}
 
-      # Étapes finales côté serveur (venv + pip install si besoin, puis vérifications)
-      - name: Finalize on server
+      - name: 🛠 Finalize on server
         uses: appleboy/ssh-action@v0.1.5
         with:
           host: ${{ secrets.AD_HOST }}
@@ -53,26 +53,8 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd "${{ env.AD_PATH }}"
+            mkdir -p "${{ secrets.AD_PATH }}"
+            cd "${{ secrets.AD_PATH }}"
             echo "Deployed from GitHub at $(date -u)" > _from_github.txt
-
-            # (optionnel) Python: crée un venv et installe les deps si requirements.txt existe
-            if [ -f requirements.txt ]; then
-              if [ ! -d .venv ]; then python3 -m venv .venv; fi
-              . .venv/bin/activate
-              pip install --upgrade pip
-              pip install -r requirements.txt
-            fi
-
-            # (option) Node: si package.json existe
-            if [ -f package.json ]; then
-              if command -v npm >/dev/null 2>&1; then
-                npm ci || npm install
-                npm run build || true
-              fi
-            fi
-
-            # Affiche le contenu pour contrôle
             ls -al
-
             echo "✅ Deploy finished"
