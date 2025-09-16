@@ -4,7 +4,7 @@
     "port": 3306,
     "user": "anne",
     "password": "YOUR_PASSWORD_HERE",
-    "database": "anne-games-db"
+    "database": "anne_games_db"
   },
   "api": {
     "rawg_api_key": "a596903618f14aeeb1fcbbb790180dd5",

@@ -18,7 +18,7 @@ Le système utilise plusieurs niveaux de configuration :
     "port": 3306,
     "user": "anne",
     "password": "SERA_REMPLACE_PAR_ENV",
-    "database": "anne-games-db",
+    "database": "anne_games_db",
     "charset": "utf8mb4"
   },
   "api": {

@@ -19,13 +19,13 @@
 Dans **Settings > Secrets and variables > Actions** :
 
 ```
-ALWAYSDATA_HOST=ssh-anne.alwaysdata.net
+ALWAYSDATA_HOST=ssh-anne-alwaysdata.net
 ALWAYSDATA_USERNAME=anne
 ALWAYSDATA_SSH_KEY=votre-cle-ssh-privee
 DB_HOST=mysql-anne.alwaysdata.net
 DB_USER=anne
 DB_PASSWORD=Vicky2@18
-DB_NAME=anne-games-db
+DB_NAME=anne_games_db
 RAWG_API_KEY=a596903618f14aeeb1fcbbb790180dd5
 ```
 
