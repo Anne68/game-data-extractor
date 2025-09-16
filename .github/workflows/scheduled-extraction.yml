@@ -1,14 +1,14 @@
 name: ⏰ Scheduled Data Extraction
 on:
   schedule:
-  - cron: '0 4 * * *'   # 6h Paris (4h UTC)
-  - cron: '0 16 * * *'  # 18h Paris (16h UTC)
-  - cron: '0 10 * * *'  # 12h Paris (10h UTC)
-  - cron: '0 0 * * 0'   # 2h Paris dimanche (0h UTC Sunday)
+    - cron: '0 4 * * *'
+    - cron: '0 16 * * *'
+    - cron: '0 10 * * *'
+    - cron: '0 0 * * 0'
   workflow_dispatch:
     inputs:
       extraction_type:
-        description: 'Type d\'extraction'
+        description: "Type d'extraction"
         required: true
         default: 'games'
         type: choice
