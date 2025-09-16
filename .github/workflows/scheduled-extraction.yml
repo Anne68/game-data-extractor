@@ -1,11 +1,10 @@
 name: ⏰ Scheduled Data Extraction
-
 on:
   schedule:
-    - cron: '0 4 * * *'   # 6h Paris
-    - cron: '0 16 * * *'  # 18h Paris  
-    - cron: '0 10 * * *'  # 12h Paris
-    - cron: '0 0 * * 0'   # 2h Paris dimanche
+    - cron: '0 4 * * *'   # 6h Paris (4h UTC)
+    - cron: '0 16 * * *'  # 18h Paris (16h UTC)  
+    - cron: '0 10 * * *'  # 12h Paris (10h UTC)
+    - cron: '0 0 * * 0'   # 2h Paris dimanche (0h UTC Sunday)
   workflow_dispatch:
     inputs:
       extraction_type:
@@ -33,18 +32,30 @@ jobs:
         script: |
           cd ~/game-extraction
           
+          # Check which schedule triggered this run
           if [[ "${{ github.event.schedule }}" == "0 4 * * *" ]] || [[ "${{ github.event.schedule }}" == "0 16 * * *" ]]; then
+            echo "Running games extraction..."
             python3 scripts/run_extraction.py --games-only
           elif [[ "${{ github.event.schedule }}" == "0 10 * * *" ]]; then
+            echo "Running prices extraction..."
             python3 scripts/run_extraction.py --prices-only
           elif [[ "${{ github.event.schedule }}" == "0 0 * * 0" ]]; then
+            echo "Running maintenance..."
             python3 scripts/run_extraction.py --maintenance
+          # Handle manual workflow_dispatch triggers
           elif [[ "${{ github.event.inputs.extraction_type }}" == "games" ]]; then
+            echo "Manual games extraction..."
             python3 scripts/run_extraction.py --games-only
           elif [[ "${{ github.event.inputs.extraction_type }}" == "prices" ]]; then
+            echo "Manual prices extraction..."
             python3 scripts/run_extraction.py --prices-only
           elif [[ "${{ github.event.inputs.extraction_type }}" == "full" ]]; then
+            echo "Manual full extraction..."
             python3 scripts/run_extraction.py --full
           elif [[ "${{ github.event.inputs.extraction_type }}" == "maintenance" ]]; then
+            echo "Manual maintenance..."
             python3 scripts/run_extraction.py --maintenance
+          else
+            echo "No matching trigger found, running default games extraction..."
+            python3 scripts/run_extraction.py --games-only
           fi
