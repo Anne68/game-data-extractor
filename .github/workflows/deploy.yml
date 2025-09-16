@@ -51,7 +51,7 @@ jobs:
           rsync -az --delete \
             --exclude '.git/' \
             --exclude '.github/' \
-            -e "ssh -o StrictHostKeyChecking=no -i id_deploy" \
+            -e "sshpass -p '${{ secrets.AD_PASSWORD }}' ssh -o StrictHostKeyChecking=no" \
             ./ ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}:${{ secrets.AD_PATH }}/
 
       # Liste côté serveur (pour confirmer)
