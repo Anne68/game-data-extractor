@@ -19,14 +19,14 @@ jobs:
           [ -n "${{ secrets.AD_HOST }}" ]    || { echo "❌ AD_HOST missing"; exit 1; }
           [ -n "${{ secrets.AD_USER }}" ]    || { echo "❌ AD_USER missing"; exit 1; }
           [ -n "${{ secrets.AD_PATH }}" ]    || { echo "❌ AD_PATH missing"; exit 1; }
-          [ -n "${{ secrets.AD_SSH_KEY }}" ] || { echo "❌ AD_SSH_KEY missing"; exit 1; }
+          [ -n "${{ secrets.ADD_SSH_KEY }}" ] || { echo "❌ ADD_SSH_KEY missing"; exit 1; }
           echo "✅ All secrets are present"
 
       # Setup SSH key with proper permissions
       - name: Setup SSH key
         shell: bash
         env:
-          SSH_KEY: ${{ secrets.AD_SSH_KEY }}
+          SSH_KEY: ${{ secrets.ADD_SSH_KEY }}
         run: |
           # Create SSH directory
           mkdir -p ~/.ssh
@@ -45,18 +45,38 @@ jobs:
           echo "..."
           tail -n 1 ~/.ssh/id_deploy
 
-      # Test SSH connection
+      # Test SSH connection with detailed debugging
       - name: Test SSH connectivity
         shell: bash
         run: |
-          echo "🔍 Testing SSH connection..."
+          echo "🔍 Testing SSH connection with detailed debugging..."
+          
+          # First, try a simple connection test
+          echo "Step 1: Basic connection test"
+          ssh -v -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes \
+              ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
+              "echo 'Connection successful'; whoami; hostname" 2>&1 || {
+              echo "❌ SSH connection failed. Checking common issues..."
+              
+              # Check if we can reach the host
+              echo "Step 2: Testing host connectivity"
+              nc -zv ${{ secrets.AD_HOST }} 22 2>&1 || echo "Host unreachable on port 22"
+              
+              # Try with password authentication to test credentials
+              echo "Step 3: If you have password access, this might help debug:"
+              echo "Try manually: ssh ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}"
+              
+              exit 1
+          }
+          
+          # If connection works, create test directory and file
+          echo "✅ SSH connection successful, setting up deployment structure..."
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no \
               ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-              "echo '✅ Connected as:' \$(whoami)@\$(hostname); \
-               echo '📁 Creating target directory...'; \
-               mkdir -p '${{ secrets.AD_PATH }}'; \
-               echo '📝 Writing test file...'; \
-               echo 'Deployment from GitHub Actions at' \$(date -u) > '${{ secrets.AD_PATH }}/_github_deploy.txt'"
+              "mkdir -p '${{ secrets.AD_PATH }}' && \
+               echo 'GitHub Actions deployment test at' \$(date -u) > '${{ secrets.AD_PATH }}/_github_deploy.txt' && \
+               echo '📁 Target directory created successfully'"
 
       # Deploy files using rsync with SSH key
       - name: Deploy with rsync
