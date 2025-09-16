@@ -1,4 +1,4 @@
-name: ⏰ Scheduled Data Extraction
+name: ⏰ Scheduled Data Extraction (FIXED)
 on:
   schedule:
     - cron: '0 4 * * *'
@@ -30,32 +30,76 @@ jobs:
         username: ${{ secrets.AD_USER }}
         key: ${{ secrets.AD_SSH_KEY }}
         script: |
+          echo "🔍 Pre-flight checks..."
+          
+          # Vérifier que le projet existe
+          if [ ! -d ~/game-extraction ]; then
+            echo "❌ Project directory ~/game-extraction not found!"
+            echo "📋 Please run the deployment workflow first"
+            exit 1
+          fi
+          
           cd ~/game-extraction
           
-          # Check which schedule triggered this run
-          if [[ "${{ github.event.schedule }}" == "0 4 * * *" ]] || [[ "${{ github.event.schedule }}" == "0 16 * * *" ]]; then
-            echo "Running games extraction..."
-            python3 scripts/run_extraction.py --games-only
-          elif [[ "${{ github.event.schedule }}" == "0 10 * * *" ]]; then
-            echo "Running prices extraction..."
-            python3 scripts/run_extraction.py --prices-only
-          elif [[ "${{ github.event.schedule }}" == "0 0 * * 0" ]]; then
-            echo "Running maintenance..."
+          # Vérifier que le script existe
+          if [ ! -f scripts/run_extraction.py ]; then
+            echo "❌ Script scripts/run_extraction.py not found!"
+            echo "📂 Current directory contents:"
+            ls -la
+            exit 1
+          fi
+          
+          # Vérifier Python et les dépendances
+          echo "🐍 Python version: $(python3 --version)"
+          
+          # Exporter les variables d'environnement pour AlwaysData
+          export DB_HOST="${{ secrets.DB_HOST }}"
+          export DB_USER="${{ secrets.DB_USER }}"
+          export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+          export DB_NAME="${{ secrets.DB_NAME }}"
+          export RAWG_API_KEY="${{ secrets.RAWG_API_KEY }}"
+          export LOG_LEVEL="INFO"
+          export HEADLESS_MODE="true"
+          
+          # Déterminer le type d'extraction à exécuter
+          SCHEDULE_TYPE=""
+          MANUAL_TYPE=""
+          
+          # Variables GitHub ne sont pas toujours disponibles, utilisons des conditions plus robustes
+          if [ -n "${{ github.event.schedule }}" ]; then
+            SCHEDULE_TYPE="${{ github.event.schedule }}"
+          fi
+          
+          if [ -n "${{ github.event.inputs.extraction_type }}" ]; then
+            MANUAL_TYPE="${{ github.event.inputs.extraction_type }}"
+          fi
+          
+          echo "📊 Schedule type: '$SCHEDULE_TYPE'"
+          echo "📊 Manual type: '$MANUAL_TYPE'"
+          
+          # Logique d'exécution
+          if [[ "$SCHEDULE_TYPE" == "0 4 * * *" ]] || [[ "$SCHEDULE_TYPE" == "0 16 * * *" ]]; then
+            echo "⏰ Running scheduled games extraction..."
+            python3 scripts/run_extraction.py --games-only --limit 500
+          elif [[ "$SCHEDULE_TYPE" == "0 10 * * *" ]]; then
+            echo "⏰ Running scheduled prices extraction..."
+            python3 scripts/run_extraction.py --prices-only --limit 50
+          elif [[ "$SCHEDULE_TYPE" == "0 0 * * 0" ]]; then
+            echo "⏰ Running scheduled maintenance..."
             python3 scripts/run_extraction.py --maintenance
-          # Handle manual workflow_dispatch triggers
-          elif [[ "${{ github.event.inputs.extraction_type }}" == "games" ]]; then
-            echo "Manual games extraction..."
-            python3 scripts/run_extraction.py --games-only
-          elif [[ "${{ github.event.inputs.extraction_type }}" == "prices" ]]; then
-            echo "Manual prices extraction..."
-            python3 scripts/run_extraction.py --prices-only
-          elif [[ "${{ github.event.inputs.extraction_type }}" == "full" ]]; then
-            echo "Manual full extraction..."
-            python3 scripts/run_extraction.py --full
-          elif [[ "${{ github.event.inputs.extraction_type }}" == "maintenance" ]]; then
-            echo "Manual maintenance..."
+          elif [[ "$MANUAL_TYPE" == "games" ]]; then
+            echo "🖱️ Manual games extraction..."
+            python3 scripts/run_extraction.py --games-only --limit 500
+          elif [[ "$MANUAL_TYPE" == "prices" ]]; then
+            echo "🖱️ Manual prices extraction..."
+            python3 scripts/run_extraction.py --prices-only --limit 50
+          elif [[ "$MANUAL_TYPE" == "full" ]]; then
+            echo "🖱️ Manual full extraction..."
+            python3 scripts/run_extraction.py --full --limit 200
+          elif [[ "$MANUAL_TYPE" == "maintenance" ]]; then
+            echo "🖱️ Manual maintenance..."
             python3 scripts/run_extraction.py --maintenance
           else
-            echo "No matching trigger found, running default games extraction..."
-            python3 scripts/run_extraction.py --games-only
+            echo "🔧 Default: running games extraction..."
+            python3 scripts/run_extraction.py --games-only --limit 100
           fi
