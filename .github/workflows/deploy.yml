@@ -1,61 +1,63 @@
-name: 🔍 SSH Debug to AlwaysData
+name: 🚀 Deploy to AlwaysData (native SSH)
 
 on:
-  workflow_dispatch: {}
   push:
     branches: [ main ]
+  workflow_dispatch: {}
 
 jobs:
-  ssh-debug:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ✅ Validate secrets (fail fast, show lengths)
+      # Vérifie que les secrets existent (sinon on fail tout de suite)
+      - name: Validate secrets
         shell: bash
         run: |
           set -e
-          check() { [ -n "$1" ] || { echo "❌ $2 is EMPTY"; exit 1; }; }
-          check '${{ secrets.AD_HOST }}'     AD_HOST
-          check '${{ secrets.AD_USER }}'     AD_USER
-          check '${{ secrets.AD_PATH }}'     AD_PATH
-          check '${{ secrets.AD_SSH_KEY }}'  AD_SSH_KEY
-          echo "✅ AD_HOST: '${{ secrets.AD_HOST }}'"
-          echo "✅ AD_USER: '${{ secrets.AD_USER }}'"
-          echo "✅ AD_PATH: '${{ secrets.AD_PATH }}'"
-          # Affiche seulement la taille de la clé (pas le contenu)
-          python - <<'PY'
-import os, sys
-key=os.getenv('AD_SSH_KEY')
-print(f"✅ AD_SSH_KEY length: {len(key) if key else 0} chars")
-PY
+          [ -n "${{ secrets.AD_HOST }}" ]    || { echo "AD_HOST missing"; exit 1; }
+          [ -n "${{ secrets.AD_USER }}" ]    || { echo "AD_USER missing"; exit 1; }
+          [ -n "${{ secrets.AD_PATH }}" ]    || { echo "AD_PATH missing"; exit 1; }
+          [ -n "${{ secrets.AD_SSH_KEY }}" ] || { echo "AD_SSH_KEY missing"; exit 1; }
+          echo "Secrets OK"
 
-      - name: 🔑 Write SSH private key file (600)
+      # On place la clé privée dans un fichier avec permissions 600
+      - name: Write SSH key file
         shell: bash
+        env:
+          SSH_KEY: ${{ secrets.AD_SSH_KEY }}
         run: |
-          set -e
           umask 077
-          cat > id_deploy <<'EOF'
-${{ secrets.AD_SSH_KEY }}
-EOF
+          printf '%s\n' "$SSH_KEY" > id_deploy
           ls -l id_deploy
           head -n 1 id_deploy || true
           tail -n 1 id_deploy || true
 
-      - name: 🧪 SSH -vvv connectivity (capture raw log)
+      # Test de connexion très verbeux pour diagnostiquer si besoin
+      - name: Test SSH connectivity (verbose)
         shell: bash
         run: |
-          set -x
-          mkdir -p logs
           ssh -vvv -o StrictHostKeyChecking=no \
               -i id_deploy ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-              'echo "CONNECTED OK user=$(whoami) host=$(hostname)"; mkdir -p "'"${{ secrets.AD_PATH }}"'"; echo "From GitHub $(date -u)" > "'"${{ secrets.AD_PATH }}"'/_from_github.txt"' \
-              2> logs/ssh_verbose.log
-          echo "✅ SSH command exit code: $?"
+              "echo CONNECTED: \$(whoami)@\$(hostname); mkdir -p '${{ secrets.AD_PATH }}'; echo 'From GitHub ' \$(date -u) > '${{ secrets.AD_PATH }}/_from_github.txt'"
 
-      - name: 📤 Upload SSH verbose log
-        uses: actions/upload-artifact@v4
-        with:
-          name: ssh_verbose
-          path: logs/ssh_verbose.log
+      # Déploiement (rsync) — supprime ce bloc si tu veux juste tester la connexion
+      - name: Deploy with rsync
+        shell: bash
+        run: |
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            -e "ssh -o StrictHostKeyChecking=no -i id_deploy" \
+            ./ ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}:${{ secrets.AD_PATH }}/
+
+      # Liste côté serveur (pour confirmer)
+      - name: List target dir
+        shell: bash
+        run: |
+          ssh -o StrictHostKeyChecking=no -i id_deploy \
+            ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
+            "ls -al '${{ secrets.AD_PATH }}'; echo; cat '${{ secrets.AD_PATH }}/_from_github.txt' || true"
