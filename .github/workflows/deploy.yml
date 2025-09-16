@@ -1,24 +1,21 @@
-name: 🚀 Deploy to AlwaysData
+name: 🔎 SSH Test to AlwaysData
 
 on:
+  workflow_dispatch: {}
   push:
     branches: [ main ]
-  workflow_dispatch: {}
 
 jobs:
-  deploy:
+  ssh-test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: ✅ Validate Secrets
+      - name: ✅ Validate Secrets (fail if missing)
         run: |
-          [ -z "${{ secrets.AD_HOST }}" ] && echo "❌ AD_HOST is empty" && exit 1 || echo "✅ AD_HOST OK"
-          [ -z "${{ secrets.AD_USER }}" ] && echo "❌ AD_USER is empty" && exit 1 || echo "✅ AD_USER OK"
-          [ -z "${{ secrets.AD_PATH }}" ] && echo "❌ AD_PATH is empty" && exit 1 || echo "✅ AD_PATH OK"
-          [ -z "${{ secrets.AD_SSH_KEY }}" ] && echo "❌ AD_SSH_KEY is empty" && exit 1 || echo "✅ AD_SSH_KEY OK"
+          [ -n "${{ secrets.AD_HOST }}" ]     || { echo "❌ AD_HOST is empty"; exit 1; }
+          [ -n "${{ secrets.AD_USER }}" ]     || { echo "❌ AD_USER is empty"; exit 1; }
+          [ -n "${{ secrets.AD_PATH }}" ]     || { echo "❌ AD_PATH is empty"; exit 1; }
+          [ -n "${{ secrets.AD_SSH_KEY }}" ]  || { echo "❌ AD_SSH_KEY is empty"; exit 1; }
+          echo "✅ All secrets present"
 
       - name: 🔑 Test SSH connectivity
         uses: appleboy/ssh-action@v0.1.5
@@ -27,34 +24,9 @@ jobs:
           username: ${{ secrets.AD_USER }}
           key: ${{ secrets.AD_SSH_KEY }}
           port: 22
-          script: |
-            echo "✅ Connected to $(hostname) as $(whoami)"
-
-      - name: 📂 Upload files via SCP
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.AD_HOST }}
-          username: ${{ secrets.AD_USER }}
-          key: ${{ secrets.AD_SSH_KEY }}
-          port: 22
-          source: |
-            ./*
-            !.git/**
-            !.github/**
-          target: ${{ secrets.AD_PATH }}
-
-      - name: 🛠 Finalize on server
-        uses: appleboy/ssh-action@v0.1.5
-        with:
-          host: ${{ secrets.AD_HOST }}
-          username: ${{ secrets.AD_USER }}
-          key: ${{ secrets.AD_SSH_KEY }}
-          port: 22
           script_stop: true
           script: |
-            set -e
+            echo "Connected OK → host=$(hostname), user=$(whoami)"
             mkdir -p "${{ secrets.AD_PATH }}"
-            cd "${{ secrets.AD_PATH }}"
-            echo "Deployed from GitHub at $(date -u)" > _from_github.txt
-            ls -al
-            echo "✅ Deploy finished"
+            echo "Deployed $(date -u)" > "${{ secrets.AD_PATH }}/_from_github.txt"
+            ls -al "${{ secrets.AD_PATH }}"
