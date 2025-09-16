@@ -1,56 +1,61 @@
-name: 🚀 Deploy to AlwaysData (native SSH)
+name: 🔍 SSH Debug to AlwaysData
 
 on:
-  push:
-    branches: [ main ]          # adapte si ta branche par défaut n'est pas main
   workflow_dispatch: {}
+  push:
+    branches: [ main ]
 
 jobs:
-  deploy:
+  ssh-debug:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ✅ Validate secrets (fail fast)
-        run: |
-          [ -n "${{ secrets.AD_HOST }}" ]    || { echo "❌ AD_HOST is empty"; exit 1; }
-          [ -n "${{ secrets.AD_USER }}" ]    || { echo "❌ AD_USER is empty"; exit 1; }
-          [ -n "${{ secrets.AD_PATH }}" ]    || { echo "❌ AD_PATH is empty"; exit 1; }
-          [ -n "${{ secrets.AD_SSH_KEY }}" ] || { echo "❌ AD_SSH_KEY is empty"; exit 1; }
-          echo "✅ All secrets present"
-
-      - name: 🔑 Write SSH key file
+      - name: ✅ Validate secrets (fail fast, show lengths)
         shell: bash
         run: |
+          set -e
+          check() { [ -n "$1" ] || { echo "❌ $2 is EMPTY"; exit 1; }; }
+          check '${{ secrets.AD_HOST }}'     AD_HOST
+          check '${{ secrets.AD_USER }}'     AD_USER
+          check '${{ secrets.AD_PATH }}'     AD_PATH
+          check '${{ secrets.AD_SSH_KEY }}'  AD_SSH_KEY
+          echo "✅ AD_HOST: '${{ secrets.AD_HOST }}'"
+          echo "✅ AD_USER: '${{ secrets.AD_USER }}'"
+          echo "✅ AD_PATH: '${{ secrets.AD_PATH }}'"
+          # Affiche seulement la taille de la clé (pas le contenu)
+          python - <<'PY'
+import os, sys
+key=os.getenv('AD_SSH_KEY')
+print(f"✅ AD_SSH_KEY length: {len(key) if key else 0} chars")
+PY
+
+      - name: 🔑 Write SSH private key file (600)
+        shell: bash
+        run: |
+          set -e
           umask 077
           cat > id_deploy <<'EOF'
-          ${{ secrets.AD_SSH_KEY }}
-          EOF
+${{ secrets.AD_SSH_KEY }}
+EOF
           ls -l id_deploy
+          head -n 1 id_deploy || true
+          tail -n 1 id_deploy || true
 
-      - name: 🧪 Test SSH connectivity (verbose)
+      - name: 🧪 SSH -vvv connectivity (capture raw log)
         shell: bash
         run: |
+          set -x
+          mkdir -p logs
           ssh -vvv -o StrictHostKeyChecking=no \
               -i id_deploy ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-              'echo "Connected: $(whoami) on $(hostname)"; mkdir -p "${{ secrets.AD_PATH }}"; echo "From GitHub $(date -u)" > "${{ secrets.AD_PATH }}/_from_github.txt"'
-          echo "✅ SSH OK"
+              'echo "CONNECTED OK user=$(whoami) host=$(hostname)"; mkdir -p "'"${{ secrets.AD_PATH }}"'"; echo "From GitHub $(date -u)" > "'"${{ secrets.AD_PATH }}"'/_from_github.txt"' \
+              2> logs/ssh_verbose.log
+          echo "✅ SSH command exit code: $?"
 
-      - name: 📦 Deploy with rsync
-        shell: bash
-        run: |
-          rsync -az --delete \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            -e "ssh -o StrictHostKeyChecking=no -i id_deploy" \
-            ./ ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }}:${{ secrets.AD_PATH }}/
-          echo "✅ Files synced"
-
-      - name: 🔍 List target directory
-        shell: bash
-        run: |
-          ssh -o StrictHostKeyChecking=no -i id_deploy \
-            ${{ secrets.AD_USER }}@${{ secrets.AD_HOST }} \
-            "ls -al '${{ secrets.AD_PATH }}'; echo; cat '${{ secrets.AD_PATH }}/_from_github.txt' || true"
+      - name: 📤 Upload SSH verbose log
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh_verbose
+          path: logs/ssh_verbose.log
