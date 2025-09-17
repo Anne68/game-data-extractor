@@ -1,4 +1,4 @@
-< 'EOF'
+
 """
 🧹 Module de maintenance du système
 """
