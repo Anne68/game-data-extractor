@@ -64,14 +64,20 @@ class RawgExtractor:
         else:
             return pd.DataFrame(columns=['game_id_rawg', 'title', 'release_date', 'genres', 'platforms', 'rating', 'metacritic', 'background_image', 'last_update'])
     
-    def _parse_game(self, game_data):
-        try:
-            return {
-                'game_id_rawg': game_data.get('id'),
-                'title': game_data.get('name', '').strip(),
-                'release_date': game_data.get('released'),
-                'genres': ', '.join([g.get('name', '') for g in game_data.get('genres', [])]),
-                'platforms': ', '.join([p.get('platform', {}).get('name', '') for p in game_data.get('platforms', [])]),
-                'rating': game_data.get('rating'),
-                'metacritic': game_data.get('metacritic'),
-                'backgroun
+    def _parse_game(self, game_data: Dict[Any, Any]) -> Optional[Dict[str, Any]]:
+    """Parse les données d'un jeu depuis l'API"""
+    try:
+        return {
+            'game_id_rawg': game_data.get('id'),
+            'title': game_data.get('name', '').strip(),
+            'release_date': game_data.get('released'),
+            'genres': ', '.join([g.get('name', '') for g in game_data.get('genres', [])]),
+            'platforms': ', '.join([p.get('platform', {}).get('name', '') for p in game_data.get('platforms', [])]),
+            'rating': game_data.get('rating'),
+            'metacritic': game_data.get('metacritic'),
+            'background_image': game_data.get('background_image'),
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    except Exception as e:
+        logger.error(f"Erreur parsing jeu: {e}")
+        return None
