@@ -1,4 +1,4 @@
-<< 'EOF'
+
 """
 📢 Module de gestion des notifications
 """
@@ -82,4 +82,3 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"Erreur notification Discord: {e}")
             return False
-EOF
