@@ -1,29 +1,38 @@
-name: ⏰ Scheduled Data Extraction (FIXED)
+name: ⏰ Scheduled Data Extraction (Incremental Updates)
 on:
   schedule:
-    - cron: '0 4 * * *'
-    - cron: '0 16 * * *'
-    - cron: '0 10 * * *'
-    - cron: '0 0 * * 0'
+    # Mise à jour incrémentale quotidienne
+    - cron: '0 4 * * *'   # 06:00 Paris - Mise à jour incrémentale
+    - cron: '0 16 * * *'  # 18:00 Paris - Mise à jour incrémentale
+    # Scraping prix uniquement
+    - cron: '0 10 * * *'  # 12:00 Paris - Prix uniquement
+    # Maintenance hebdomadaire
+    - cron: '0 0 * * 0'   # 02:00 Dimanche - Maintenance
   workflow_dispatch:
     inputs:
       extraction_type:
         description: "Type d'extraction"
         required: true
-        default: 'games'
+        default: 'incremental'
         type: choice
         options:
-        - games
-        - prices
-        - full
-        - maintenance
+        - incremental # Mise à jour + 100 nouveaux jeux + prix auto
+        - games       # Jeux uniquement (nouvelle extraction)
+        - prices      # Prix uniquement
+        - maintenance # Maintenance système
+        - status      # Afficher le statut
+      games_limit:
+        description: "Limite nombre de jeux (pour games seulement)"
+        required: false
+        default: '100'
+        type: string
 
 jobs:
   extract:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 🚀 Run extraction on AlwaysData
+    - name: 🚀 Run incremental extraction on AlwaysData
       uses: appleboy/ssh-action@v0.1.5
       with:
         host: ${{ secrets.AD_HOST }}
@@ -35,71 +44,98 @@ jobs:
           # Vérifier que le projet existe
           if [ ! -d ~/game-extraction ]; then
             echo "❌ Project directory ~/game-extraction not found!"
-            echo "📋 Please run the deployment workflow first"
             exit 1
           fi
           
           cd ~/game-extraction
           
-          # Vérifier que le script existe
+          # Vérifier que les scripts existent
           if [ ! -f scripts/run_extraction.py ]; then
             echo "❌ Script scripts/run_extraction.py not found!"
-            echo "📂 Current directory contents:"
-            ls -la
             exit 1
           fi
           
-          # Vérifier Python et les dépendances
-          echo "🐍 Python version: $(python3 --version)"
+          if [ ! -f scripts/incremental_update.py ]; then
+            echo "❌ Script scripts/incremental_update.py not found!"
+            echo "📋 Creating incremental update script..."
+            # Le script sera créé via le déploiement
+            exit 1
+          fi
           
-          # Exporter les variables d'environnement pour AlwaysData
+          # Variables d'environnement
           export DB_HOST="${{ secrets.DB_HOST }}"
           export DB_USER="${{ secrets.DB_USER }}"
           export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
           export DB_NAME="${{ secrets.DB_NAME }}"
           export RAWG_API_KEY="${{ secrets.RAWG_API_KEY }}"
+          export DISCORD_WEBHOOK="${{ secrets.DISCORD_WEBHOOK }}"
+          export NOTIFICATION_EMAIL="${{ secrets.NOTIFICATION_EMAIL }}"
           export LOG_LEVEL="INFO"
           export HEADLESS_MODE="true"
+          export SCRAPING_ENABLED="true"
+          export PRICE_SCRAPING_SIMULATION="true"
           
-          # Déterminer le type d'extraction à exécuter
-          SCHEDULE_TYPE=""
-          MANUAL_TYPE=""
-          
-          # Variables GitHub ne sont pas toujours disponibles, utilisons des conditions plus robustes
-          if [ -n "${{ github.event.schedule }}" ]; then
-            SCHEDULE_TYPE="${{ github.event.schedule }}"
-          fi
-          
-          if [ -n "${{ github.event.inputs.extraction_type }}" ]; then
-            MANUAL_TYPE="${{ github.event.inputs.extraction_type }}"
-          fi
+          # Déterminer le type d'opération
+          SCHEDULE_TYPE="${{ github.event.schedule }}"
+          MANUAL_TYPE="${{ github.event.inputs.extraction_type }}"
+          GAMES_LIMIT="${{ github.event.inputs.games_limit }}"
           
           echo "📊 Schedule type: '$SCHEDULE_TYPE'"
           echo "📊 Manual type: '$MANUAL_TYPE'"
+          echo "📊 Games limit: '$GAMES_LIMIT'"
           
-          # Logique d'exécution
+          # Afficher le statut actuel avant l'opération
+          echo "📋 Statut actuel de la base de données:"
+          python3 scripts/run_extraction.py --status
+          echo ""
+          
+          # Construire et exécuter la commande
           if [[ "$SCHEDULE_TYPE" == "0 4 * * *" ]] || [[ "$SCHEDULE_TYPE" == "0 16 * * *" ]]; then
-            echo "⏰ Running scheduled games extraction..."
-            python3 scripts/run_extraction.py --games-only --limit 500
+            echo "⏰ Mise à jour incrémentale programmée..."
+            python3 scripts/run_extraction.py --incremental
+            
           elif [[ "$SCHEDULE_TYPE" == "0 10 * * *" ]]; then
-            echo "⏰ Running scheduled prices extraction..."
-            python3 scripts/run_extraction.py --prices-only --limit 50
+            echo "⏰ Scraping prix programmé..."
+            python3 scripts/run_extraction.py --prices-only --prices-limit 50
+            
           elif [[ "$SCHEDULE_TYPE" == "0 0 * * 0" ]]; then
-            echo "⏰ Running scheduled maintenance..."
+            echo "⏰ Maintenance programmée..."
             python3 scripts/run_extraction.py --maintenance
+            
+          elif [[ "$MANUAL_TYPE" == "incremental" ]]; then
+            echo "🖱️ Mise à jour incrémentale manuelle..."
+            if [ -n "$GAMES_LIMIT" ] && [ "$GAMES_LIMIT" != "100" ]; then
+              python3 scripts/run_extraction.py --incremental --games-limit "$GAMES_LIMIT"
+            else
+              python3 scripts/run_extraction.py --incremental
+            fi
+            
           elif [[ "$MANUAL_TYPE" == "games" ]]; then
-            echo "🖱️ Manual games extraction..."
-            python3 scripts/run_extraction.py --games-only --limit 500
+            echo "🖱️ Extraction jeux manuelle..."
+            if [ -n "$GAMES_LIMIT" ]; then
+              python3 scripts/run_extraction.py --games-only --games-limit "$GAMES_LIMIT"
+            else
+              python3 scripts/run_extraction.py --games-only --games-limit 100
+            fi
+            
           elif [[ "$MANUAL_TYPE" == "prices" ]]; then
-            echo "🖱️ Manual prices extraction..."
-            python3 scripts/run_extraction.py --prices-only --limit 50
-          elif [[ "$MANUAL_TYPE" == "full" ]]; then
-            echo "🖱️ Manual full extraction..."
-            python3 scripts/run_extraction.py --full --limit 200
+            echo "🖱️ Scraping prix manuel..."
+            python3 scripts/run_extraction.py --prices-only --prices-limit 50
+            
           elif [[ "$MANUAL_TYPE" == "maintenance" ]]; then
-            echo "🖱️ Manual maintenance..."
+            echo "🖱️ Maintenance manuelle..."
             python3 scripts/run_extraction.py --maintenance
+            
+          elif [[ "$MANUAL_TYPE" == "status" ]]; then
+            echo "🖱️ Affichage statut..."
+            python3 scripts/run_extraction.py --status
+            
           else
-            echo "🔧 Default: running games extraction..."
-            python3 scripts/run_extraction.py --games-only --limit 100
+            echo "🔧 Par défaut: mise à jour incrémentale..."
+            python3 scripts/run_extraction.py --incremental
           fi
+          
+          # Afficher les statistiques finales après l'opération
+          echo ""
+          echo "📊 Statistiques finales:"
+          python3 scripts/run_extraction.py --status
