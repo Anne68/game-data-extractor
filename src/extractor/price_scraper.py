@@ -1,4 +1,3 @@
-cat > src/extractor/price_scraper.py << 'EOF'
 """
 💰 Module de scraping des prix (version simplifiée pour AlwaysData)
 """
@@ -74,4 +73,3 @@ class PriceScraper:
         """Test le scraping"""
         logger.info("Test scraping (simulation)")
         return True
-EOF
