@@ -1,4 +1,3 @@
-<< 'EOF'
 """
 🗄️ Module de gestion de la base de données MySQL
 """
@@ -180,4 +179,3 @@ class DatabaseManager:
     
     def optimize_database(self):
         return True
-EOF
