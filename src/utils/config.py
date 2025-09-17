@@ -18,7 +18,6 @@ except ImportError:
 
 class NotificationManager:
     """Gestionnaire de notifications"""
-    
     def __init__(self):
         # Configuration directe depuis les variables d'environnement pour éviter les imports circulaires
         self.discord_webhook = os.getenv('DISCORD_WEBHOOK')
@@ -38,6 +37,10 @@ class NotificationManager:
             logger.info(f"Notification {level}: {message}")
         
         return success
+
+    def get_notifications_config(self) -> Dict[str, Any]:
+    """Récupère la configuration des notifications"""
+    return self.config_data.get("notifications", {})
     
     def _send_discord_notification(self, message: str, level: str, title: str = None) -> bool:
         """Envoie une notification Discord"""
