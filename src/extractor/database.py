@@ -1,4 +1,4 @@
-cat > src/extractor/database.py << 'EOF'
+<< 'EOF'
 """
 🗄️ Module de gestion de la base de données MySQL
 """
