@@ -75,7 +75,7 @@ def get_database_state(logger):
         stats['total_games'] = cursor.fetchone()[0]
         
         # Total prix
-        cursor.execute("SELECT COUNT(*) FROM game_prices")
+        cursor.execute("SELECT COUNT(*) FROM best_price_pc")
         stats['total_prices'] = cursor.fetchone()[0]
         
         # Dernière page API
@@ -87,7 +87,7 @@ def get_database_state(logger):
         cursor.execute("""
             SELECT COUNT(DISTINCT g.game_id_rawg)
             FROM games g
-            LEFT JOIN game_prices p ON g.game_id_rawg = p.game_id_rawg
+            LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
             WHERE p.game_id_rawg IS NULL
         """)
         stats['games_without_prices'] = cursor.fetchone()[0]
