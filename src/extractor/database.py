@@ -151,43 +151,29 @@ class DatabaseManager:
                 cursor.close()
                 conn.close()
     
-    def get_games_for_price_update(self, limit: int = 50) -> pd.DataFrame:
-        """Récupère les jeux à mettre à jour pour les prix (utilise best_price_pc)"""
-        conn = self.get_connection()
-        if not conn:
-            return pd.DataFrame()
+    def get_games_for_price_update(self, limit=50):
+    conn = self.get_connection()
+    if not conn:
+        return pd.DataFrame()
+    
+    try:
+        # Version simplifiée qui fonctionne avec votre structure
+        query = """
+            SELECT DISTINCT g.game_id_rawg, g.title
+            FROM games g
+            LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
+            WHERE p.game_id_rawg IS NULL
+            ORDER BY g.rating DESC
+            LIMIT %s
+        """
+        return pd.read_sql(query, conn, params=[limit])
         
-        try:
-            # Prioriser les jeux sans prix ou avec prix anciens dans best_price_pc
-            query = """
-                SELECT g.game_id_rawg, g.title, g.rating, g.metacritic,
-                       MAX(p.last_update) as last_price_update,
-                       COUNT(p.title) as price_count
-                FROM games g
-                LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
-                WHERE g.title IS NOT NULL AND g.title != ''
-                GROUP BY g.game_id_rawg, g.title, g.rating, g.metacritic
-                HAVING (
-                    last_price_update IS NULL 
-                    OR last_price_update < DATE_SUB(NOW(), INTERVAL 7 DAY)
-                    OR price_count < 2
-                )
-                ORDER BY 
-                    CASE WHEN last_price_update IS NULL THEN 0 ELSE 1 END,
-                    g.rating DESC, 
-                    g.metacritic DESC,
-                    last_price_update ASC
-                LIMIT %s
-            """
-            
-            return pd.read_sql(query, conn, params=[limit])
-            
-        except Error as e:
-            logger.error(f"Erreur récupération jeux pour prix: {e}")
-            return pd.DataFrame()
-        finally:
-            if conn.is_connected():
-                conn.close()
+    except Error as e:
+        logger.error(f"Erreur récupération jeux pour prix: {e}")
+        return pd.DataFrame()
+    finally:
+        if conn.is_connected():
+            conn.close()
     
     def save_prices(self, prices_df: pd.DataFrame) -> bool:
         """Sauvegarde les prix dans best_price_pc (adapté à votre structure)"""
