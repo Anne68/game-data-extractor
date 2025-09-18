@@ -1,25 +1,28 @@
 """
-💰 Module de scraping réel des prix depuis DLCompare
+💰 Module de scraping des prix avec Selenium - Version complète inspirée du notebook
 """
 
 import pandas as pd
-import requests
 import time
 import logging
 import os
 import sys
-import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-from bs4 import BeautifulSoup
-import urllib.parse
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 logger = logging.getLogger(__name__)
 
 class PriceScraper:
-    """Scraper de prix réel depuis DLCompare pour récupérer uniquement le meilleur prix"""
+    """Scraper de prix avec Selenium pour DLCompare - Inspiré du notebook Jupyter"""
     
     def __init__(self):
         try:
@@ -30,37 +33,51 @@ class PriceScraper:
             scraping_config = self._get_config_from_env()
         
         self.enabled = scraping_config.get('enabled', True)
-        self.max_games = scraping_config.get('max_games_per_session', 20)  # Réduit pour éviter la surcharge
-        self.delay = scraping_config.get('delay_between_requests', 5)  # Augmenté pour éviter les blocages
+        self.max_games = scraping_config.get('max_games_per_session', 20)
+        self.delay = scraping_config.get('delay_between_requests', 3)
+        self.headless = scraping_config.get('headless', True)
         
-        # Headers réalistes pour éviter la détection
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0'
-        }
-        
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
-        
-        logger.info(f"PriceScraper réel initialisé - Enabled: {self.enabled}")
+        logger.info(f"PriceScraper Selenium initialisé - Enabled: {self.enabled}, Headless: {self.headless}")
     
     def _get_config_from_env(self) -> Dict[str, Any]:
         return {
             'enabled': os.getenv('SCRAPING_ENABLED', 'true').lower() == 'true',
             'max_games_per_session': int(os.getenv('MAX_GAMES_SCRAPING', '20')),
-            'delay_between_requests': float(os.getenv('SCRAPING_DELAY', '5.0'))
+            'delay_between_requests': float(os.getenv('SCRAPING_DELAY', '3.0')),
+            'headless': os.getenv('HEADLESS_MODE', 'true').lower() == 'true'
         }
     
+    def _setup_selenium_driver(self):
+        """Configure le driver Selenium Chrome - Inspiré du notebook"""
+        options = Options()
+        
+        if self.headless:
+            options.add_argument('--headless')
+        
+        # Options anti-détection (inspirées du notebook)
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-plugins')
+        options.add_argument('--disable-images')  # Accélérer le chargement
+        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Désactiver les logs
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        try:
+            driver = webdriver.Chrome(options=options)
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            return driver
+        except Exception as e:
+            logger.error(f"Erreur création driver Selenium: {e}")
+            return None
+    
     def scrape_prices(self, games_df: pd.DataFrame) -> pd.DataFrame:
-        """Scrape les prix réels depuis DLCompare et ne retourne que le meilleur prix par jeu"""
+        """Scrape les prix depuis DLCompare avec Selenium - Structure du notebook"""
         if not self.enabled:
             logger.info("Scraping désactivé")
             return pd.DataFrame(columns=['game_id_rawg', 'title', 'platform', 'price', 'shop', 'url', 'last_update'])
@@ -69,162 +86,206 @@ class PriceScraper:
             logger.info("Aucun jeu à scraper")
             return pd.DataFrame(columns=['game_id_rawg', 'title', 'platform', 'price', 'shop', 'url', 'last_update'])
         
-        logger.info(f"🔍 Scraping RÉEL des prix pour {len(games_df)} jeux depuis DLCompare")
+        logger.info(f"🔍 Scraping Selenium des prix pour {len(games_df)} jeux depuis DLCompare")
         
-        prices_data = []
+        driver = self._setup_selenium_driver()
+        if not driver:
+            logger.error("Impossible d'initialiser Selenium")
+            return pd.DataFrame()
         
-        for index, game in games_df.head(min(self.max_games, len(games_df))).iterrows():
-            game_title = game.get('title', '').strip()
-            game_id = game.get('game_id_rawg')
-            
-            if not game_title:
-                continue
+        updated_prices = []
+        
+        try:
+            for index, game in games_df.head(min(self.max_games, len(games_df))).iterrows():
+                game_title = game.get('title', '').strip()
+                game_id = game.get('game_id_rawg')
                 
-            logger.info(f"🎮 Recherche prix pour: {game_title}")
+                if not game_title:
+                    continue
+                
+                logger.info(f"🎮 Recherche prix pour: {game_title}")
+                
+                try:
+                    price_info = self._scrape_game_price_selenium(driver, game_title, game_id)
+                    
+                    if price_info:
+                        updated_prices.append(price_info)
+                        logger.info(f"✅ Prix trouvé: {price_info['price']} chez {price_info['shop']}")
+                    else:
+                        logger.warning(f"❌ Aucun prix trouvé pour {game_title}")
+                        # Ajouter une entrée vide pour traçabilité
+                        updated_prices.append({
+                            'game_id_rawg': game_id,
+                            'title': game_title,
+                            'platform': 'PC',
+                            'price': None,
+                            'shop': None,
+                            'url': None,
+                            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                    
+                except Exception as e:
+                    logger.error(f"❌ Erreur scraping {game_title}: {e}")
+                    updated_prices.append({
+                        'game_id_rawg': game_id,
+                        'title': game_title,
+                        'platform': 'PC',
+                        'price': None,
+                        'shop': None,
+                        'url': None,
+                        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                
+                # Délai entre les jeux
+                time.sleep(self.delay)
+                
+        finally:
+            driver.quit()
+            logger.info("🔒 Driver Selenium fermé")
+        
+        logger.info(f"🎯 Scraping terminé: {len([p for p in updated_prices if p['price']])} prix récupérés sur {len(updated_prices)} jeux")
+        return pd.DataFrame(updated_prices)
+    
+    def _scrape_game_price_selenium(self, driver, game_title: str, game_id: int) -> Optional[Dict[str, Any]]:
+        """Scrape le prix d'un jeu spécifique - Méthode inspirée du notebook"""
+        try:
+            # URL de recherche DLCompare (structure du notebook)
+            search_term = game_title.replace(' ', '+').replace(':', '').replace('(', '').replace(')', '')
+            search_url = f"https://www.dlcompare.fr/search?q={search_term}#all"
             
+            logger.debug(f"🔗 URL recherche: {search_url}")
+            
+            driver.get(search_url)
+            time.sleep(2)  # Attendre le chargement initial
+            
+            # Chercher le premier jeu dans les résultats (logique du notebook)
             try:
-                best_price_info = self._get_best_price_from_dlcompare(game_title)
+                # Attendre que les résultats se chargent
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "name"))
+                )
+                
+                # Cliquer sur le premier jeu trouvé (comme dans le notebook)
+                game_element = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".name.clickable, .name a, [class*='game-title'] a"))
+                )
+                
+                game_element.click()
+                time.sleep(3)  # Attendre la redirection
+                
+                # Aller à la section PC (structure du notebook)
+                current_url = driver.current_url
+                if "#pc" not in current_url:
+                    pc_url = current_url.rstrip('/') + "#pc"
+                    driver.get(pc_url)
+                    time.sleep(2)
+                
+                # Extraire le meilleur prix (logique du notebook)
+                best_price_info = self._extract_best_price_selenium(driver, current_url)
                 
                 if best_price_info:
-                    prices_data.append({
+                    return {
                         'game_id_rawg': game_id,
                         'title': game_title,
                         'platform': 'PC',
                         'price': best_price_info['price'],
                         'shop': best_price_info['shop'],
-                        'url': best_price_info['url'],
+                        'url': current_url,
                         'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    })
-                    logger.info(f"✅ Prix trouvé: {best_price_info['price']} chez {best_price_info['shop']}")
-                else:
-                    logger.warning(f"❌ Aucun prix trouvé pour {game_title}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Erreur scraping pour {game_title}: {e}")
-            
-            # Délai entre chaque jeu pour éviter les blocages
-            time.sleep(self.delay)
-        
-        logger.info(f"🎯 Scraping terminé: {len(prices_data)} prix récupérés")
-        return pd.DataFrame(prices_data)
-    
-    def _get_best_price_from_dlcompare(self, game_title: str) -> Optional[Dict[str, str]]:
-        """Récupère le meilleur prix depuis DLCompare"""
-        try:
-            # Préparer la recherche
-            search_term = self._clean_game_title_for_search(game_title)
-            search_url = f"https://www.dlcompare.fr/jeux/search?q={urllib.parse.quote(search_term)}"
-            
-            logger.debug(f"🔗 URL de recherche: {search_url}")
-            
-            # Première requête : page de recherche
-            response = self.session.get(search_url, timeout=15)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Chercher le premier résultat de jeu
-            game_links = soup.find_all('a', href=re.compile(r'/jeux/\d+/'))
-            
-            if not game_links:
-                logger.debug(f"❌ Aucun lien de jeu trouvé pour {game_title}")
-                return None
-            
-            # Prendre le premier résultat
-            first_game_link = game_links[0]
-            game_url = "https://www.dlcompare.fr" + first_game_link.get('href')
-            
-            logger.debug(f"🎮 Page jeu trouvée: {game_url}")
-            
-            # Délai avant la page détaillée
-            time.sleep(2)
-            
-            # Deuxième requête : page détaillée du jeu
-            game_response = self.session.get(game_url, timeout=15)
-            game_response.raise_for_status()
-            
-            game_soup = BeautifulSoup(game_response.content, 'html.parser')
-            
-            # Extraire le meilleur prix (méthode basée sur la structure DLCompare)
-            best_price = self._extract_best_price_from_game_page(game_soup, game_url)
-            
-            return best_price
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Erreur réseau lors du scraping: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"❌ Erreur inattendue lors du scraping: {e}")
-            return None
-    
-    def _clean_game_title_for_search(self, title: str) -> str:
-        """Nettoie le titre du jeu pour optimiser la recherche"""
-        # Supprimer les caractères spéciaux et les éditions
-        title = re.sub(r'\(.*?\)', '', title)  # Supprimer ce qui est entre parenthèses
-        title = re.sub(r'[™®©]', '', title)    # Supprimer les symboles de marque
-        title = re.sub(r'\s+', ' ', title)     # Normaliser les espaces
-        title = title.strip()
-        
-        # Supprimer les éditions courantes
-        editions_to_remove = ['Game of the Year', 'GOTY', 'Deluxe', 'Premium', 'Gold', 'Ultimate', 'Enhanced', 'Remastered']
-        for edition in editions_to_remove:
-            title = re.sub(rf'\b{edition}\b', '', title, flags=re.IGNORECASE)
-        
-        return title.strip()
-    
-    def _extract_best_price_from_game_page(self, soup: BeautifulSoup, game_url: str) -> Optional[Dict[str, str]]:
-        """Extrait le meilleur prix depuis la page détaillée du jeu"""
-        try:
-            # Chercher les offres de prix (structure basée sur l'image DLCompare)
-            price_containers = soup.find_all(['div', 'span'], class_=re.compile(r'price|offer|deal'))
-            
-            if not price_containers:
-                # Fallback: chercher tous les éléments contenant €
-                price_containers = soup.find_all(text=re.compile(r'\d+[,.]?\d*\s*€'))
+                    }
                 
+                return None
+                
+            except TimeoutException:
+                logger.debug(f"❌ Timeout: Aucun résultat trouvé pour {game_title}")
+                return None
+            except Exception as e:
+                logger.debug(f"❌ Erreur navigation pour {game_title}: {e}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur générale scraping {game_title}: {e}")
+            return None
+    
+    def _extract_best_price_selenium(self, driver, game_url: str) -> Optional[Dict[str, str]]:
+        """Extrait le meilleur prix depuis la page du jeu - Inspiré du notebook"""
+        try:
             best_price = None
             best_shop = None
-            best_price_value = float('inf')
             
-            for container in price_containers:
-                # Extraire le prix
-                if hasattr(container, 'text'):
-                    price_text = container.text
-                else:
-                    price_text = str(container)
+            # Sélecteurs multiples pour les prix (basés sur l'observation DLCompare)
+            price_selectors = [
+                ".lowPrice",
+                ".price.lowest",
+                ".best-price",
+                "[class*='price'][class*='low']",
+                ".price-value",
+                ".offer-price"
+            ]
+            
+            # Sélecteurs multiples pour les boutiques
+            shop_selectors = [
+                "a.shop > span",
+                ".shop-name",
+                ".retailer-name",
+                "[class*='shop'] span",
+                ".vendor-name"
+            ]
+            
+            # Chercher le prix le plus bas
+            for price_selector in price_selectors:
+                try:
+                    price_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, price_selector))
+                    )
+                    best_price = price_element.text.strip()
+                    if best_price and ('€' in best_price or '$' in best_price):
+                        logger.debug(f"💰 Prix trouvé avec sélecteur {price_selector}: {best_price}")
+                        break
+                except:
+                    continue
+            
+            # Chercher le nom de la boutique
+            for shop_selector in shop_selectors:
+                try:
+                    shop_element = driver.find_element(By.CSS_SELECTOR, shop_selector)
+                    best_shop = shop_element.text.strip()
+                    if best_shop:
+                        logger.debug(f"🏪 Boutique trouvée avec sélecteur {shop_selector}: {best_shop}")
+                        break
+                except:
+                    continue
+            
+            # Fallback: chercher dans tout le DOM
+            if not best_price:
+                try:
+                    # Recherche générique des prix dans le texte
+                    page_source = driver.page_source.lower()
+                    import re
+                    price_matches = re.findall(r'(\d+[,.]?\d*)\s*€', page_source)
+                    if price_matches:
+                        # Prendre le premier prix trouvé
+                        best_price = f"{price_matches[0]}€"
+                        logger.debug(f"💰 Prix trouvé via regex: {best_price}")
+                except:
+                    pass
+            
+            if not best_shop:
+                # Boutiques connues à chercher dans le texte
+                known_shops = ['Steam', 'Epic Games Store', 'GOG', 'Origin', 'Uplay', 'Microsoft Store', 'Kinguin', 'G2A', 'CDKeys']
+                page_text = driver.page_source.lower()
+                for shop in known_shops:
+                    if shop.lower() in page_text:
+                        best_shop = shop
+                        break
                 
-                price_match = re.search(r'(\d+[,.]?\d*)\s*€', price_text)
-                if price_match:
-                    price_str = price_match.group(1).replace(',', '.')
-                    try:
-                        price_value = float(price_str)
-                        
-                        if price_value < best_price_value and price_value > 0:
-                            best_price_value = price_value
-                            best_price = f"{price_str}€"
-                            
-                            # Chercher le nom de la boutique dans le contexte
-                            shop_element = container.find_parent() if hasattr(container, 'find_parent') else None
-                            if shop_element:
-                                shop_text = shop_element.get_text()
-                                # Extraire les noms de boutiques courantes
-                                shops = ['Steam', 'Epic Games Store', 'GOG', 'Origin', 'Uplay', 'Microsoft Store', 'PlayStation Store', 'Nintendo eShop', 'Kinguin', 'G2A', 'CDKeys']
-                                for shop in shops:
-                                    if shop.lower() in shop_text.lower():
-                                        best_shop = shop
-                                        break
-                            
-                            if not best_shop:
-                                best_shop = "DLCompare"  # Fallback
-                                
-                    except ValueError:
-                        continue
+                if not best_shop:
+                    best_shop = "DLCompare"
             
-            if best_price and best_price_value != float('inf'):
+            if best_price:
                 return {
                     'price': best_price,
-                    'shop': best_shop or "DLCompare",
-                    'url': game_url
+                    'shop': best_shop or "DLCompare"
                 }
             
             return None
@@ -234,8 +295,8 @@ class PriceScraper:
             return None
     
     def test_scraping(self, test_games: List[Dict[str, str]]) -> bool:
-        """Test le scraping avec un jeu réel"""
-        logger.info("🧪 Test de scraping réel")
+        """Test le scraping avec Selenium - Version notebook"""
+        logger.info("🧪 Test de scraping Selenium")
         
         test_df = pd.DataFrame([{
             'game_id_rawg': 12345,
@@ -246,8 +307,8 @@ class PriceScraper:
         success = not results.empty and len(results) > 0
         
         if success:
-            logger.info("✅ Test de scraping réussi")
+            logger.info("✅ Test Selenium réussi")
         else:
-            logger.warning("❌ Test de scraping échoué")
+            logger.warning("❌ Test Selenium échoué")
             
         return success
