@@ -189,7 +189,7 @@ def fetch_exactly_50_games():
                     "platforms": ", ".join([p["platform"]["name"] for p in g.get("platforms", [])]) if g.get("platforms") else None,
                     "rating": g.get("rating"),
                     "metacritic": g.get("metacritic"),
-                    "background_image": g.get("background_image"),
+                    #"background_image": g.get("background_image"),
                     "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 
