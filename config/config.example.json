@@ -3,7 +3,7 @@
     "host": "mysql-anne.alwaysdata.net",
     "port": 3306,
     "user": "anne",
-    "password": "YOUR_PASSWORD_HERE",
+    "password": "Vicky2@18",
     "database": "anne_games_db"
   },
   "api": {
