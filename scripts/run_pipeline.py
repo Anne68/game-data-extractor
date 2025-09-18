@@ -1,4 +1,4 @@
-# scripts/run_pipeline.py - VERSION AVEC GESTION DES DOUBLONS
+# scripts/run_pipeline.py - VERSION AVEC EXTRACTION SÉQUENTIELLE DE 50 JEUX
 import os
 import time
 from datetime import datetime
@@ -71,10 +71,53 @@ else:
     raise RuntimeError("Impossible de se connecter à MySQL")
 
 # =========================
-#   GESTION DES DOUBLONS
+#   GESTION SÉQUENTIELLE DES EXTRACTIONS
 # =========================
-def setup_unique_constraints():
-    """Configure les contraintes uniques pour éviter les doublons"""
+
+def get_next_page_to_extract():
+    """Détermine la prochaine page à extraire depuis l'API RAWG"""
+    conn = get_mysql_connection()
+    if not conn:
+        return 65  # Page de départ par défaut (ID ~2561)
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Vérifier si la table api_state existe, sinon la créer
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_state (
+                id INT PRIMARY KEY,
+                last_page INT NOT NULL DEFAULT 65,
+                last_extraction DATETIME,
+                total_games_extracted INT DEFAULT 0
+            )
+        """)
+        
+        # Récupérer l'état actuel
+        cursor.execute("SELECT last_page, total_games_extracted FROM api_state WHERE id = 1")
+        result = cursor.fetchone()
+        
+        if result:
+            last_page, total_extracted = result
+            next_page = last_page + 1
+            print(f"📋 Reprise depuis la page {next_page} ({total_extracted} jeux extraits au total)")
+        else:
+            # Première exécution, commencer à la page 65 (environ ID 2561)
+            next_page = 65
+            cursor.execute("INSERT INTO api_state (id, last_page, total_games_extracted) VALUES (1, 64, 0)")
+            print(f"🆕 Première extraction, démarrage page {next_page}")
+        
+        cursor.close()
+        return next_page
+        
+    except Error as e:
+        print(f"❌ Erreur récupération état: {e}")
+        return 65
+    finally:
+        conn.close()
+
+def update_extraction_state(last_page, games_extracted):
+    """Met à jour l'état d'extraction après traitement"""
     conn = get_mysql_connection()
     if not conn:
         return False
@@ -82,62 +125,110 @@ def setup_unique_constraints():
     try:
         cursor = conn.cursor()
         
-        # Vérifier si la contrainte unique existe déjà sur games
         cursor.execute("""
-            SELECT COUNT(*) FROM information_schema.table_constraints 
-            WHERE constraint_schema = %s 
-            AND table_name = 'games' 
-            AND constraint_name = 'unique_game_id'
-        """, (DB_NAME,))
+            UPDATE api_state 
+            SET last_page = %s, 
+                last_extraction = NOW(), 
+                total_games_extracted = total_games_extracted + %s
+            WHERE id = 1
+        """, (last_page, games_extracted))
         
-        constraint_exists = cursor.fetchone()[0] > 0
-        
-        if not constraint_exists:
-            print("🔧 Ajout de la contrainte unique sur games.game_id_rawg...")
-            try:
-                cursor.execute("ALTER TABLE games ADD CONSTRAINT unique_game_id UNIQUE (game_id_rawg)")
-                print("✅ Contrainte unique ajoutée sur games")
-            except Error as e:
-                if "Duplicate entry" in str(e):
-                    print("⚠️ Doublons détectés, nettoyage nécessaire avant contrainte")
-                    return False
-                else:
-                    print(f"❌ Erreur ajout contrainte: {e}")
-        else:
-            print("✅ Contrainte unique déjà présente sur games")
-        
-        # Même chose pour best_price_pc
-        cursor.execute("""
-            SELECT COUNT(*) FROM information_schema.table_constraints 
-            WHERE constraint_schema = %s 
-            AND table_name = 'best_price_pc' 
-            AND constraint_name = 'unique_price_game'
-        """, (DB_NAME,))
-        
-        price_constraint_exists = cursor.fetchone()[0] > 0
-        
-        if not price_constraint_exists:
-            print("🔧 Ajout de la contrainte unique sur best_price_pc.game_id_rawg...")
-            try:
-                cursor.execute("ALTER TABLE best_price_pc ADD CONSTRAINT unique_price_game UNIQUE (game_id_rawg)")
-                print("✅ Contrainte unique ajoutée sur best_price_pc")
-            except Error as e:
-                if "Duplicate entry" in str(e):
-                    print("⚠️ Doublons détectés dans best_price_pc")
-        else:
-            print("✅ Contrainte unique déjà présente sur best_price_pc")
-        
+        print(f"✅ État mis à jour: page {last_page}, +{games_extracted} jeux")
         cursor.close()
         return True
         
     except Error as e:
-        print(f"❌ Erreur setup contraintes: {e}")
+        print(f"❌ Erreur mise à jour état: {e}")
         return False
     finally:
         conn.close()
 
-def check_duplicates():
-    """Vérifie et affiche les doublons existants"""
+def fetch_exactly_50_games():
+    """Récupère exactement 50 nouveaux jeux depuis la dernière position"""
+    start_page = get_next_page_to_extract()
+    
+    base = "https://api.rawg.io/api/games"
+    headers = {"Accept": "application/json"}
+    
+    all_games = []
+    current_page = start_page
+    target_games = 50
+    
+    print(f"🎯 Objectif: récupérer {target_games} jeux depuis la page {start_page}")
+    
+    while len(all_games) < target_games:
+        try:
+            params = {
+                "key": RAWG_API_KEY, 
+                "ordering": "id",  # Tri par ID pour ordre séquentiel
+                "page_size": 40,   # Maximum par page
+                "page": current_page
+            }
+            
+            print(f"📄 Traitement page {current_page}...")
+            r = requests.get(base, params=params, headers=headers, timeout=20)
+            r.raise_for_status()
+            
+            data = r.json()
+            page_results = data.get("results", [])
+            
+            if not page_results:
+                print(f"⚠️ Aucun résultat page {current_page}, arrêt")
+                break
+            
+            # Ajouter les jeux de cette page
+            for g in page_results:
+                if len(all_games) >= target_games:
+                    break
+                    
+                game_data = {
+                    "game_id_rawg": g.get("id"),
+                    "title": g.get("name"),
+                    "release_date": g.get("released"),
+                    "genres": ", ".join([x["name"] for x in g.get("genres", [])]) if g.get("genres") else None,
+                    "platforms": ", ".join([p["platform"]["name"] for p in g.get("platforms", [])]) if g.get("platforms") else None,
+                    "rating": g.get("rating"),
+                    "metacritic": g.get("metacritic"),
+                    "background_image": g.get("background_image"),
+                    "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                
+                all_games.append(game_data)
+            
+            print(f"  → {len(page_results)} jeux sur la page, total: {len(all_games)}")
+            
+            # Passer à la page suivante
+            current_page += 1
+            time.sleep(0.8)  # Respect du rate limiting
+            
+            # Sécurité: éviter les boucles infinies
+            if current_page - start_page > 10:
+                print("⚠️ Limite de pages atteinte")
+                break
+                
+        except Exception as e:
+            print(f"❌ Erreur page {current_page}: {e}")
+            break
+    
+    # Mettre à jour l'état
+    if all_games:
+        games_added = len(all_games)
+        last_processed_page = current_page - 1
+        update_extraction_state(last_processed_page, games_added)
+        
+        print(f"✅ Extraction terminée: {games_added} jeux récupérés")
+        
+        # Afficher quelques exemples
+        if len(all_games) >= 3:
+            print("🎮 Premiers jeux extraits:")
+            for i in range(min(3, len(all_games))):
+                game = all_games[i]
+                print(f"  - {game['title']} (ID: {game['game_id_rawg']})")
+    
+    return pd.DataFrame(all_games)
+
+def show_extraction_status():
+    """Affiche l'état actuel de l'extraction séquentielle"""
     conn = get_mysql_connection()
     if not conn:
         return
@@ -145,101 +236,34 @@ def check_duplicates():
     try:
         cursor = conn.cursor()
         
-        print("\n🔍 Vérification des doublons...")
+        cursor.execute("SELECT last_page, last_extraction, total_games_extracted FROM api_state WHERE id = 1")
+        result = cursor.fetchone()
         
-        # Doublons dans games
-        cursor.execute("""
-            SELECT game_id_rawg, COUNT(*) as count 
-            FROM games 
-            GROUP BY game_id_rawg 
-            HAVING count > 1
-            ORDER BY count DESC
-            LIMIT 10
-        """)
-        
-        game_duplicates = cursor.fetchall()
-        if game_duplicates:
-            print(f"⚠️ {len(game_duplicates)} jeux en doublon détectés:")
-            for game_id, count in game_duplicates[:5]:
-                cursor.execute("SELECT title FROM games WHERE game_id_rawg = %s LIMIT 1", (game_id,))
-                title = cursor.fetchone()[0]
-                print(f"  - {title} (ID: {game_id}) : {count} exemplaires")
+        if result:
+            last_page, last_extraction, total_extracted = result
+            print(f"📊 État extraction séquentielle:")
+            print(f"  • Dernière page traitée: {last_page}")
+            print(f"  • Prochaine page: {last_page + 1}")  
+            print(f"  • Total jeux extraits: {total_extracted}")
+            print(f"  • Dernière extraction: {last_extraction}")
+            
+            # Estimer l'ID approximatif
+            estimated_min_id = (last_page - 1) * 40
+            estimated_max_id = last_page * 40
+            print(f"  • IDs approximatifs traités: {estimated_min_id}-{estimated_max_id}")
         else:
-            print("✅ Aucun doublon dans games")
-        
-        # Doublons dans best_price_pc
-        cursor.execute("""
-            SELECT game_id_rawg, COUNT(*) as count 
-            FROM best_price_pc 
-            GROUP BY game_id_rawg 
-            HAVING count > 1
-            ORDER BY count DESC
-            LIMIT 10
-        """)
-        
-        price_duplicates = cursor.fetchall()
-        if price_duplicates:
-            print(f"⚠️ {len(price_duplicates)} prix en doublon détectés:")
-            for game_id, count in price_duplicates[:5]:
-                cursor.execute("SELECT title FROM best_price_pc WHERE game_id_rawg = %s LIMIT 1", (game_id,))
-                title = cursor.fetchone()[0]
-                print(f"  - {title} (ID: {game_id}) : {count} exemplaires")
-        else:
-            print("✅ Aucun doublon dans best_price_pc")
-        
+            print("📊 Aucun état d'extraction trouvé (première fois)")
+            
         cursor.close()
-        return len(game_duplicates), len(price_duplicates)
         
     except Error as e:
-        print(f"❌ Erreur vérification doublons: {e}")
-        return 0, 0
+        print(f"❌ Erreur affichage état: {e}")
     finally:
         conn.close()
 
-def remove_duplicates():
-    """Supprime les doublons en gardant la version la plus récente"""
-    conn = get_mysql_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        
-        print("\n🧹 Nettoyage des doublons...")
-        
-        # Supprimer doublons games (garder le plus récent)
-        cursor.execute("""
-            DELETE g1 FROM games g1 
-            INNER JOIN games g2 
-            WHERE g1.game_id_rawg = g2.game_id_rawg 
-            AND g1.last_update < g2.last_update
-        """)
-        
-        games_cleaned = cursor.rowcount
-        print(f"🗑️ {games_cleaned} doublons supprimés dans games")
-        
-        # Supprimer doublons best_price_pc (garder le plus récent)
-        cursor.execute("""
-            DELETE p1 FROM best_price_pc p1 
-            INNER JOIN best_price_pc p2 
-            WHERE p1.game_id_rawg = p2.game_id_rawg 
-            AND p1.last_update < p2.last_update
-        """)
-        
-        prices_cleaned = cursor.rowcount
-        print(f"🗑️ {prices_cleaned} doublons supprimés dans best_price_pc")
-        
-        cursor.close()
-        
-        print(f"✅ Nettoyage terminé: {games_cleaned + prices_cleaned} doublons supprimés")
-        return True
-        
-    except Error as e:
-        print(f"❌ Erreur suppression doublons: {e}")
-        return False
-    finally:
-        conn.close()
-
+# =========================
+#   GESTION DES DOUBLONS (simplifiée)
+# =========================
 def get_database_stats():
     """Affiche les statistiques de la base de données"""
     conn = get_mysql_connection()
@@ -260,22 +284,17 @@ def get_database_stats():
         cursor.execute("SELECT COUNT(*) FROM best_price_pc")
         total_prices = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(DISTINCT game_id_rawg) FROM best_price_pc")
-        unique_prices = cursor.fetchone()[0]
-        
         # Dernière mise à jour
         cursor.execute("SELECT MAX(last_update) FROM games")
         last_update = cursor.fetchone()[0]
         
         print(f"\n📊 Statistiques base de données:")
         print(f"  🎮 Jeux: {total_games} total, {unique_games} uniques")
-        print(f"  💰 Prix: {total_prices} total, {unique_prices} uniques")
+        print(f"  💰 Prix: {total_prices} total")
         print(f"  📅 Dernière MAJ: {last_update}")
         
         if total_games != unique_games:
-            print(f"  ⚠️ {total_games - unique_games} doublons détectés dans games")
-        if total_prices != unique_prices:
-            print(f"  ⚠️ {total_prices - unique_prices} doublons détectés dans best_price_pc")
+            print(f"  ⚠️ {total_games - unique_games} doublons détectés")
         
         cursor.close()
         
@@ -285,37 +304,10 @@ def get_database_stats():
         conn.close()
 
 # =========================
-#   FONCTIONS PRINCIPALES (avec gestion doublons améliorée)
+#   INSERTION EN BASE
 # =========================
-def fetch_new_games_from_rawg(page_size=40, pages=2):
-    """Récupère des jeux depuis RAWG"""
-    base = "https://api.rawg.io/api/games"
-    headers = {"Accept": "application/json"}
-    params_base = {"key": RAWG_API_KEY, "ordering": "-added", "page_size": page_size}
-
-    rows = []
-    for page in range(1, pages + 1):
-        params = dict(params_base, page=page)
-        r = requests.get(base, params=params, headers=headers, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        for g in data.get("results", []):
-            rows.append({
-                "game_id_rawg": g.get("id"),
-                "title": g.get("name"),
-                "release_date": g.get("released"),
-                "genres": ", ".join([x["name"] for x in g.get("genres", [])]) if g.get("genres") else None,
-                "platforms": ", ".join([p["platform"]["name"] for p in g.get("platforms", [])]) if g.get("platforms") else None,
-                "rating": g.get("rating"),
-                "metacritic": g.get("metacritic"),
-                "background_image": g.get("background_image"),
-                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-        time.sleep(0.8)
-    return pd.DataFrame(rows)
-
 def upsert_games(df: pd.DataFrame) -> int:
-    """Insert/Update games avec gestion avancée des doublons"""
+    """Insert/Update games avec comptage précis"""
     if df.empty:
         return 0
         
@@ -330,8 +322,8 @@ def upsert_games(df: pd.DataFrame) -> int:
         
         for _, r in df.iterrows():
             # Vérifier si le jeu existe déjà
-            cursor.execute("SELECT last_update FROM games WHERE game_id_rawg = %s", (r["game_id_rawg"],))
-            existing = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM games WHERE game_id_rawg = %s", (r["game_id_rawg"],))
+            exists = cursor.fetchone()[0] > 0
             
             query = """
                 INSERT INTO games (game_id_rawg, title, release_date, genres, platforms, rating, metacritic, background_image, last_update)
@@ -355,14 +347,14 @@ def upsert_games(df: pd.DataFrame) -> int:
             
             cursor.execute(query, values)
             
-            if existing:
+            if exists:
                 updated += 1
             else:
                 inserted += 1
         
         cursor.close()
         print(f"✅ Jeux traités: {inserted} nouveaux, {updated} mis à jour")
-        return inserted + updated
+        return inserted
         
     except Error as e:
         print(f"❌ Erreur upsert: {e}")
@@ -371,7 +363,7 @@ def upsert_games(df: pd.DataFrame) -> int:
         conn.close()
 
 def fetch_games_to_price(limit: int = None) -> pd.DataFrame:
-    """Récupère les jeux à pricer (sans doublons)"""
+    """Récupère les jeux à pricer"""
     if limit is None:
         limit = SCRAPE_LIMIT
         
@@ -405,7 +397,7 @@ def fetch_games_to_price(limit: int = None) -> pd.DataFrame:
         conn.close()
 
 # =========================
-#   SCRAPING ET SAUVEGARDE (inchangé)
+#   SCRAPING (inchangé mais optionnel)
 # =========================
 def scrape_best_prices(games_df: pd.DataFrame) -> pd.DataFrame:
     """Scrape les prix avec Selenium"""
@@ -477,7 +469,7 @@ def scrape_best_prices(games_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 def save_prices_to_mysql(df_prices: pd.DataFrame) -> int:
-    """Sauvegarde les prix avec mysql-connector direct"""
+    """Sauvegarde les prix"""
     if df_prices.empty:
         return 0
         
@@ -519,66 +511,58 @@ def save_prices_to_mysql(df_prices: pd.DataFrame) -> int:
         conn.close()
 
 # =========================
-#   MAIN AVEC GESTION DOUBLONS
+#   MAIN AVEC EXTRACTION SÉQUENTIELLE
 # =========================
 def main():
-    print("🚀 Démarrage du pipeline d'extraction avec gestion des doublons")
+    print("🚀 Pipeline d'extraction séquentielle - 50 jeux par run")
     
     try:
-        # 1. Statistiques initiales
+        # 1. Afficher l'état actuel
+        show_extraction_status()
+        
+        # 2. Statistiques base
         get_database_stats()
         
-        # 2. Vérification des doublons
-        game_dups, price_dups = check_duplicates()
-        
-        # 3. Nettoyage si nécessaire
-        if game_dups > 0 or price_dups > 0:
-            user_input = input("\n❓ Nettoyer les doublons maintenant ? (o/N): ")
-            if user_input.lower() in ['o', 'oui', 'y', 'yes']:
-                remove_duplicates()
-        
-        # 4. Configuration des contraintes uniques
-        setup_unique_constraints()
-        
-        # 5. Extraction normale
-        print("\n🧲 Récupération de nouveaux jeux via RAWG…")
-        new_games = fetch_new_games_from_rawg(page_size=40, pages=2)
-        print(f"→ récupérés: {len(new_games)}")
+        # 3. Extraction de exactement 50 nouveaux jeux
+        print("\n🎯 Extraction séquentielle de 50 nouveaux jeux...")
+        new_games = fetch_exactly_50_games()
         
         if not new_games.empty:
-            n = upsert_games(new_games)
-            print(f"→ traités: {n}")
+            print(f"✅ {len(new_games)} jeux récupérés pour insertion")
+            
+            # 4. Insertion en base
+            inserted = upsert_games(new_games)
+            print(f"✅ {inserted} NOUVEAUX jeux ajoutés en base")
         else:
-            print("⚠️ Aucun jeu récupéré")
-            n = 0
-
-        print("\n📋 Sélection des jeux à scrapper (prix)…")
-        to_price = fetch_games_to_price(limit=SCRAPE_LIMIT)
-        print(f"→ à traiter: {len(to_price)}")
-
-        if not to_price.empty:
-            print("\n🔍 Scraping DLCompare (PC)…")
-            df_prices = scrape_best_prices(to_price)
-            print(f"→ scrapés: {len(df_prices)}")
-
-            print("\n💾 Enregistrement des prix…")
-            saved = save_prices_to_mysql(df_prices)
-            print(f"→ lignes enregistrées/MAJ: {saved}")
+            print("❌ Aucun jeu récupéré")
+            return
+        
+        # 5. Scraping prix (optionnel et limité)
+        user_input = input("\n❓ Scraper quelques prix ? (o/N): ")
+        if user_input.lower() in ['o', 'oui', 'y', 'yes']:
+            print("\n📋 Sélection de 5 jeux pour scraping prix...")
+            to_price = fetch_games_to_price(limit=5)
+            
+            if not to_price.empty:
+                print(f"🔍 Scraping {len(to_price)} jeux...")
+                df_prices = scrape_best_prices(to_price)
+                saved = save_prices_to_mysql(df_prices)
+                print(f"💾 {saved} prix sauvegardés")
         else:
-            print("✅ Aucun jeu nécessite une mise à jour des prix")
-            saved = 0
-
-        # 6. Statistiques finales
-        print("\n" + "="*50)
+            print("⏩ Scraping prix ignoré")
+        
+        # 6. État final
+        print("\n" + "="*60)
+        show_extraction_status()
         get_database_stats()
         
-        print(f"\n🎉 Pipeline terminé avec succès!")
-        print(f"📊 Résumé: {n} jeux traités, {saved} prix mis à jour")
+        print(f"\n🎉 Extraction séquentielle terminée!")
+        print(f"📊 Résumé: {len(new_games)} nouveaux jeux ajoutés (ID séquentiel)")
         
     except KeyboardInterrupt:
-        print("\n⏹️ Arrêt demandé par l'utilisateur")
+        print("\n⏹️ Arrêt demandé")
     except Exception as e:
-        print(f"\n❌ Erreur dans le pipeline: {e}")
+        print(f"\n❌ Erreur: {e}")
         raise
 
 if __name__ == "__main__":
