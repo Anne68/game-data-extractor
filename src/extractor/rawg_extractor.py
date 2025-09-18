@@ -115,7 +115,7 @@ class RawgExtractor:
                 'platforms': ', '.join([p.get('platform', {}).get('name', '') for p in game_data.get('platforms', []) if p.get('platform', {}).get('name')]),
                 'rating': game_data.get('rating'),
                 'metacritic': game_data.get('metacritic'),
-                'background_image': game_data.get('background_image'),
+                #'background_image': game_data.get('background_image'),
                 'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
         except Exception as e:
