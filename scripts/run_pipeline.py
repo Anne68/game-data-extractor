@@ -20,13 +20,16 @@ from selenium.webdriver.support import expected_conditions as EC
 # =========================
 #   CONFIG / DB ENGINE
 # =========================
-RAWG_API_KEY = os.getenv("RAWG_API_KEY")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME", "anne_games_db")
-SCRAPE_LIMIT = int(os.getenv("SCRAPE_LIMIT", "20"))  # limite « sécurité »
+db_url = URL.create(
+    "mysql+mysqlconnector",
+    username=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),   # pas besoin d’encoder, @ accepté
+    host=os.getenv("DB_HOST"),
+    port=int(os.getenv("DB_PORT", "3306")),
+    database=os.getenv("DB_NAME"),
+    query={"charset": "utf8mb4"},
+)
+engine = create_engine(db_url, pool_pre_ping=True, pool_recycle=3600)
 
 if not RAWG_API_KEY:
     raise RuntimeError("RAWG_API_KEY manquant.")
