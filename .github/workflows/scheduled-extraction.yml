@@ -1,64 +1,49 @@
-name: ⏰ Scheduled Data Extraction (Incremental Updates)
+name: ⏰ Extraction Séquentielle Automatisée (50 jeux par run)
 on:
   schedule:
-    # Mise à jour incrémentale quotidienne
-    - cron: '0 4 * * *'   # 06:00 Paris - Mise à jour incrémentale
-    - cron: '0 16 * * *'  # 18:00 Paris - Mise à jour incrémentale
-    # Scraping prix uniquement
-    - cron: '0 10 * * *'  # 12:00 Paris - Prix uniquement
-    # Maintenance hebdomadaire
-    - cron: '0 0 * * 0'   # 02:00 Dimanche - Maintenance
+    # Extraction de 50 jeux toutes les 3 heures
+    - cron: '0 */3 * * *'   # 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00
+    # Ou plus conservateur: 2 fois par jour
+    # - cron: '0 8 * * *'   # 10:00 Paris
+    # - cron: '0 20 * * *'  # 22:00 Paris
   workflow_dispatch:
     inputs:
-      extraction_type:
-        description: "Type d'extraction"
-        required: true
-        default: 'incremental'
-        type: choice
-        options:
-        - incremental # Mise à jour + 100 nouveaux jeux + prix auto
-        - games       # Jeux uniquement (nouvelle extraction)
-        - prices      # Prix uniquement
-        - maintenance # Maintenance système
-        - status      # Afficher le statut
-      games_limit:
-        description: "Limite nombre de jeux (pour games seulement)"
+      extraction_count:
+        description: "Nombre d'extractions à faire"
         required: false
-        default: '100'
+        default: '1'
         type: string
+      dry_run:
+        description: "Mode test (sans insertion en base)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  extract:
+  sequential_extraction:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 🚀 Run incremental extraction on AlwaysData
+    - name: 🚀 Extraction Séquentielle sur AlwaysData
       uses: appleboy/ssh-action@v0.1.5
       with:
         host: ${{ secrets.AD_HOST }}
         username: ${{ secrets.AD_USER }}
         key: ${{ secrets.AD_SSH_KEY }}
         script: |
-          echo "🔍 Pre-flight checks..."
+          echo "🔍 Vérifications préalables..."
           
           # Vérifier que le projet existe
           if [ ! -d ~/game-extraction ]; then
-            echo "❌ Project directory ~/game-extraction not found!"
+            echo "❌ Répertoire ~/game-extraction introuvable!"
             exit 1
           fi
           
           cd ~/game-extraction
           
-          # Vérifier que les scripts existent
-          if [ ! -f scripts/run_extraction.py ]; then
-            echo "❌ Script scripts/run_extraction.py not found!"
-            exit 1
-          fi
-          
-          if [ ! -f scripts/incremental_update.py ]; then
-            echo "❌ Script scripts/incremental_update.py not found!"
-            echo "📋 Creating incremental update script..."
-            # Le script sera créé via le déploiement
+          # Vérifier que le script existe
+          if [ ! -f scripts/run_pipeline.py ]; then
+            echo "❌ Script scripts/run_pipeline.py introuvable!"
             exit 1
           fi
           
@@ -72,70 +57,212 @@ jobs:
           export NOTIFICATION_EMAIL="${{ secrets.NOTIFICATION_EMAIL }}"
           export LOG_LEVEL="INFO"
           export HEADLESS_MODE="true"
-          export SCRAPING_ENABLED="true"
-          export PRICE_SCRAPING_SIMULATION="true"
           
-          # Déterminer le type d'opération
-          SCHEDULE_TYPE="${{ github.event.schedule }}"
-          MANUAL_TYPE="${{ github.event.inputs.extraction_type }}"
-          GAMES_LIMIT="${{ github.event.inputs.games_limit }}"
+          # Déterminer le nombre d'extractions
+          EXTRACTION_COUNT="${{ github.event.inputs.extraction_count }}"
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
           
-          echo "📊 Schedule type: '$SCHEDULE_TYPE'"
-          echo "📊 Manual type: '$MANUAL_TYPE'"
-          echo "📊 Games limit: '$GAMES_LIMIT'"
-          
-          # Afficher le statut actuel avant l'opération
-          echo "📋 Statut actuel de la base de données:"
-          python3 scripts/run_extraction.py --status
-          echo ""
-          
-          # Construire et exécuter la commande
-          if [[ "$SCHEDULE_TYPE" == "0 4 * * *" ]] || [[ "$SCHEDULE_TYPE" == "0 16 * * *" ]]; then
-            echo "⏰ Mise à jour incrémentale programmée..."
-            python3 scripts/run_extraction.py --incremental
-            
-          elif [[ "$SCHEDULE_TYPE" == "0 10 * * *" ]]; then
-            echo "⏰ Scraping prix programmé..."
-            python3 scripts/run_extraction.py --prices-only --prices-limit 50
-            
-          elif [[ "$SCHEDULE_TYPE" == "0 0 * * 0" ]]; then
-            echo "⏰ Maintenance programmée..."
-            python3 scripts/run_extraction.py --maintenance
-            
-          elif [[ "$MANUAL_TYPE" == "incremental" ]]; then
-            echo "🖱️ Mise à jour incrémentale manuelle..."
-            if [ -n "$GAMES_LIMIT" ] && [ "$GAMES_LIMIT" != "100" ]; then
-              python3 scripts/run_extraction.py --incremental --games-limit "$GAMES_LIMIT"
-            else
-              python3 scripts/run_extraction.py --incremental
-            fi
-            
-          elif [[ "$MANUAL_TYPE" == "games" ]]; then
-            echo "🖱️ Extraction jeux manuelle..."
-            if [ -n "$GAMES_LIMIT" ]; then
-              python3 scripts/run_extraction.py --games-only --games-limit "$GAMES_LIMIT"
-            else
-              python3 scripts/run_extraction.py --games-only --games-limit 100
-            fi
-            
-          elif [[ "$MANUAL_TYPE" == "prices" ]]; then
-            echo "🖱️ Scraping prix manuel..."
-            python3 scripts/run_extraction.py --prices-only --prices-limit 50
-            
-          elif [[ "$MANUAL_TYPE" == "maintenance" ]]; then
-            echo "🖱️ Maintenance manuelle..."
-            python3 scripts/run_extraction.py --maintenance
-            
-          elif [[ "$MANUAL_TYPE" == "status" ]]; then
-            echo "🖱️ Affichage statut..."
-            python3 scripts/run_extraction.py --status
-            
-          else
-            echo "🔧 Par défaut: mise à jour incrémentale..."
-            python3 scripts/run_extraction.py --incremental
+          # Par défaut: 1 extraction
+          if [ -z "$EXTRACTION_COUNT" ]; then
+            EXTRACTION_COUNT=1
           fi
           
-          # Afficher les statistiques finales après l'opération
+          echo "📊 Extraction Count: $EXTRACTION_COUNT"
+          echo "📊 Dry Run: $DRY_RUN"
+          
+          # Afficher le statut initial
+          echo "📋 État avant extraction:"
+          python3 -c "
+          import mysql.connector
+          conn = mysql.connector.connect(
+              host='${{ secrets.DB_HOST }}',
+              user='${{ secrets.DB_USER }}', 
+              password='${{ secrets.DB_PASSWORD }}',
+              database='${{ secrets.DB_NAME }}'
+          )
+          cursor = conn.cursor()
+          
+          # Stats générales
+          cursor.execute('SELECT COUNT(*) FROM games')
+          total_games = cursor.fetchone()[0]
+          
+          # État extraction
+          cursor.execute('SELECT last_page, total_games_extracted FROM api_state WHERE id = 1')
+          result = cursor.fetchone()
+          if result:
+              last_page, total_extracted = result
+              print(f'🎮 Jeux en base: {total_games}')
+              print(f'📄 Dernière page: {last_page}')  
+              print(f'📊 Total extrait: {total_extracted}')
+              print(f'🎯 Prochaine page: {last_page + 1}')
+          else:
+              print(f'🎮 Jeux en base: {total_games}')
+              print(f'📊 Première extraction')
+          
+          conn.close()
+          "
+          
           echo ""
-          echo "📊 Statistiques finales:"
-          python3 scripts/run_extraction.py --status
+          
+          # Boucle d'extraction
+          for i in $(seq 1 $EXTRACTION_COUNT); do
+            echo "🚀 Extraction $i/$EXTRACTION_COUNT..."
+            
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "🧪 Mode test activé"
+              # En mode test, on peut juste afficher ce qui serait fait
+              python3 -c "
+              print('🧪 MODE TEST - Extraction de 50 jeux')
+              print('📄 Page qui serait traitée: prochaine page')
+              print('🎮 50 jeux seraient extraits et insérés')
+              "
+            else
+              # Extraction réelle
+              python3 scripts/run_pipeline.py
+            fi
+            
+            # Petite pause entre les extractions (si plusieurs)
+            if [ $i -lt $EXTRACTION_COUNT ]; then
+              echo "⏸️ Pause de 30 secondes..."
+              sleep 30
+            fi
+          done
+          
+          echo ""
+          echo "📊 État final:"
+          python3 -c "
+          import mysql.connector
+          conn = mysql.connector.connect(
+              host='${{ secrets.DB_HOST }}',
+              user='${{ secrets.DB_USER }}', 
+              password='${{ secrets.DB_PASSWORD }}',
+              database='${{ secrets.DB_NAME }}'
+          )
+          cursor = conn.cursor()
+          
+          # Stats finales
+          cursor.execute('SELECT COUNT(*) FROM games')
+          total_games = cursor.fetchone()[0]
+          
+          cursor.execute('SELECT last_page, total_games_extracted, last_extraction FROM api_state WHERE id = 1')
+          result = cursor.fetchone()
+          if result:
+              last_page, total_extracted, last_extraction = result
+              print(f'🎮 Jeux en base: {total_games}')
+              print(f'📄 Dernière page traitée: {last_page}')
+              print(f'📊 Total extrait: {total_extracted}')
+              print(f'⏰ Dernière extraction: {last_extraction}')
+              
+              # Estimer les IDs traités
+              min_id = (last_page - 1) * 40
+              max_id = last_page * 40
+              print(f'🆔 IDs approximatifs: {min_id}-{max_id}')
+          
+          conn.close()
+          "
+          
+          echo "✅ Extraction séquentielle automatisée terminée!"
+
+    # Notification Discord de succès
+    - name: 📢 Notification Discord - Succès
+      if: success()
+      run: |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+        EXTRACTION_COUNT="${{ github.event.inputs.extraction_count }}"
+        if [ -z "$EXTRACTION_COUNT" ]; then
+          EXTRACTION_COUNT=1
+        fi
+        
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "embeds": [{
+            "title": "✅ Extraction Automatique Réussie",
+            "description": "**Extraction séquentielle terminée avec succès**\n\n📊 **Détails:**\n• Extractions effectuées: '$EXTRACTION_COUNT'\n• Nouveaux jeux: ~'$(($EXTRACTION_COUNT * 50))'\n• Mode: Séquentiel automatisé\n• Serveur: AlwaysData",
+            "color": 3066993,
+            "timestamp": "'$CURRENT_TIME'",
+            "footer": {"text": "GitHub Actions • Game Data Extractor"},
+            "fields": [
+              {
+                "name": "🎯 Statut",
+                "value": "Extraction réussie",
+                "inline": true
+              },
+              {
+                "name": "🕒 Heure",
+                "value": "'"$(date '+%H:%M %Z')"'",
+                "inline": true
+              }
+            ]
+          }]
+        }'
+
+    # Notification Discord d'échec
+    - name: 📢 Notification Discord - Échec
+      if: failure()
+      run: |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+        
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "embeds": [{
+            "title": "❌ Extraction Automatique Échouée",
+            "description": "**Erreur lors de l'\''extraction séquentielle**\n\n⚠️ **Action requise:**\nVérifiez les logs dans GitHub Actions\n\n🔗 **Lien:** [Voir les détails](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+            "color": 15158332,
+            "timestamp": "'$CURRENT_TIME'",
+            "footer": {"text": "GitHub Actions • Game Data Extractor"},
+            "fields": [
+              {
+                "name": "🎯 Statut",
+                "value": "Échec d'\''extraction",
+                "inline": true
+              },
+              {
+                "name": "🕒 Heure",
+                "value": "'"$(date '+%H:%M %Z')"'",
+                "inline": true
+              }
+            ]
+          }]
+        }'
+
+    # Log détaillé en cas d'échec
+    - name: 📋 Logs d'erreur
+      if: failure()
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.AD_HOST }}
+        username: ${{ secrets.AD_USER }}
+        key: ${{ secrets.AD_SSH_KEY }}
+        script: |
+          echo "📋 Diagnostic en cas d'échec..."
+          cd ~/game-extraction
+          
+          # État de la base de données
+          python3 -c "
+          try:
+              import mysql.connector
+              conn = mysql.connector.connect(
+                  host='${{ secrets.DB_HOST }}',
+                  user='${{ secrets.DB_USER }}', 
+                  password='${{ secrets.DB_PASSWORD }}',
+                  database='${{ secrets.DB_NAME }}'
+              )
+              print('✅ Connexion MySQL OK')
+              conn.close()
+          except Exception as e:
+              print(f'❌ Erreur MySQL: {e}')
+          " || echo "❌ Impossible de se connecter à MySQL"
+          
+          # Vérification des fichiers
+          echo "📂 Fichiers présents:"
+          ls -la scripts/ | grep -E "(run_pipeline|extraction)"
+          
+          # Logs récents
+          if [ -f logs/extraction.log ]; then
+            echo "📄 Dernières lignes du log:"
+            tail -20 logs/extraction.log
+          else
+            echo "📄 Aucun log trouvé"
+          fi
