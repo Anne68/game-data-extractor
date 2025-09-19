@@ -353,9 +353,14 @@ def upsert_games(df: pd.DataFrame) -> int:
             
             # VALUES CORRIGÉES - 8 paramètres au lieu de 9
             values = (
-                r["game_id_rawg"], r["title"], r["release_date"],
-                r["genres"], r["platforms"], r["rating"],
-                r["metacritic"], r["last_update"]
+                 r["game_id_rawg"], 
+                 r["title"], 
+                 r["release_date"] if pd.notna(r["release_date"]) else None,
+                 r["genres"] if pd.notna(r["genres"]) else None,
+                 r["platforms"] if pd.notna(r["platforms"]) else None,
+                 r["rating"] if pd.notna(r["rating"]) else None,
+                 r["metacritic"] if pd.notna(r["metacritic"]) else None,
+                 r["last_update"]
             )
             
             cursor.execute(query, values)
