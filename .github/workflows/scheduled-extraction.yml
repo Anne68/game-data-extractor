@@ -172,15 +172,17 @@ jobs:
         if [ -z "$EXTRACTION_COUNT" ]; then
           EXTRACTION_COUNT=1
         fi
+        ESTIMATED_GAMES=$(($EXTRACTION_COUNT * 50))
+        CURRENT_HOUR=$(date '+%H:%M %Z')
         
-        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
-        -H "Content-Type: application/json" \
-        -d '{
+        # Créer le fichier JSON temporaire pour éviter les problèmes d'échappement
+        cat > /tmp/discord_success.json << EOF
+        {
           "embeds": [{
             "title": "✅ Extraction Automatique Réussie",
-            "description": "**Extraction séquentielle terminée avec succès**\n\n📊 **Détails:**\n• Extractions effectuées: '$EXTRACTION_COUNT'\n• Nouveaux jeux: ~'$(($EXTRACTION_COUNT * 50))'\n• Mode: Séquentiel automatisé\n• Serveur: AlwaysData",
+            "description": "**Extraction séquentielle terminée avec succès**\n\n📊 **Détails:**\n• Extractions effectuées: $EXTRACTION_COUNT\n• Nouveaux jeux: ~$ESTIMATED_GAMES\n• Mode: Séquentiel automatisé\n• Serveur: AlwaysData",
             "color": 3066993,
-            "timestamp": "'$CURRENT_TIME'",
+            "timestamp": "$CURRENT_TIME",
             "footer": {"text": "GitHub Actions • Game Data Extractor"},
             "fields": [
               {
@@ -190,42 +192,56 @@ jobs:
               },
               {
                 "name": "🕒 Heure",
-                "value": "'"$(date '+%H:%M %Z')"'",
+                "value": "$CURRENT_HOUR",
                 "inline": true
               }
             ]
           }]
-        }'
+        }
+        EOF
+        
+        # Envoyer la notification
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/discord_success.json
 
     # Notification Discord d'échec
     - name: 📢 Notification Discord - Échec
       if: failure()
       run: |
         CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+        CURRENT_HOUR=$(date '+%H:%M %Z')
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         
-        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
-        -H "Content-Type: application/json" \
-        -d '{
+        # Créer le fichier JSON pour la notification d'échec
+        cat > /tmp/discord_failure.json << EOF
+        {
           "embeds": [{
             "title": "❌ Extraction Automatique Échouée",
-            "description": "**Erreur lors de l'\''extraction séquentielle**\n\n⚠️ **Action requise:**\nVérifiez les logs dans GitHub Actions\n\n🔗 **Lien:** [Voir les détails](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+            "description": "**Erreur lors de l'extraction séquentielle**\n\n⚠️ **Action requise:**\nVérifiez les logs dans GitHub Actions\n\n🔗 **Lien:** [Voir les détails]($RUN_URL)",
             "color": 15158332,
-            "timestamp": "'$CURRENT_TIME'",
+            "timestamp": "$CURRENT_TIME",
             "footer": {"text": "GitHub Actions • Game Data Extractor"},
             "fields": [
               {
                 "name": "🎯 Statut",
-                "value": "Échec d'\''extraction",
+                "value": "Échec d'extraction",
                 "inline": true
               },
               {
                 "name": "🕒 Heure",
-                "value": "'"$(date '+%H:%M %Z')"'",
+                "value": "$CURRENT_HOUR",
                 "inline": true
               }
             ]
           }]
-        }'
+        }
+        EOF
+        
+        # Envoyer la notification
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/discord_failure.json
 
     # Log détaillé en cas d'échec
     - name: 📋 Logs d'erreur
