@@ -326,7 +326,7 @@ def upsert_games(df: pd.DataFrame) -> int:
             exists = cursor.fetchone()[0] > 0
             
             query = """
-                INSERT INTO games (game_id_rawg, title, release_date, genres, platforms, rating, metacritic, background_image, last_update)
+                INSERT INTO games (game_id_rawg, title, release_date, genres, platforms, rating, metacritic, last_update)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                   title=VALUES(title),
@@ -335,14 +335,14 @@ def upsert_games(df: pd.DataFrame) -> int:
                   platforms=VALUES(platforms),
                   rating=VALUES(rating),
                   metacritic=VALUES(metacritic),
-                  background_image=VALUES(background_image),
+                  #background_image=VALUES(background_image),
                   last_update=VALUES(last_update)
             """
             
             values = (
                 r["game_id_rawg"], r["title"], r["release_date"],
                 r["genres"], r["platforms"], r["rating"],
-                r["metacritic"], r["background_image"], r["last_update"]
+                r["metacritic"], r["last_update"]
             )
             
             cursor.execute(query, values)
