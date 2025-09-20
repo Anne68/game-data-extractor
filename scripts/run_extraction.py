@@ -131,7 +131,7 @@ def main():
                        help="Mode test avec limites réduites")
     parser.add_argument("--games-limit", type=int, default=500,
                        help="Limite du nombre de jeux à extraire")
-    parser.add_argument("--prices-limit", type=int, default=50,
+    parser.add_argument("--prices-limit", type=int, default=1000,
                        help="Limite du nombre de jeux pour le scraping prix")
     parser.add_argument("--log-level", default="INFO",
                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
