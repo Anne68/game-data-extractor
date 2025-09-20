@@ -1,6 +1,4 @@
 # Créer un nouveau script de pipeline amélioré
-cat > scripts/run_complete_pipeline.py << 'EOF'
-#!/usr/bin/env python3
 """
 Pipeline complet : extraction jeux + scraping prix automatique
 """
@@ -117,7 +115,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
 
-# Rendre le script exécutable
-chmod +x scripts/run_complete_pipeline.py
