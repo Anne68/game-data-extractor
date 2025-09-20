@@ -1,4 +1,4 @@
-cat > src/utils/text_similarity.py << 'EOF'
+
 """
 🔍 Module de similarité de texte avec TF-IDF
 """
@@ -150,4 +150,3 @@ def test_similarity():
 
 if __name__ == "__main__":
     test_similarity()
-EOF
