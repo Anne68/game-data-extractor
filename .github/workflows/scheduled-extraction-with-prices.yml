@@ -1,0 +1,72 @@
+# Modifier le workflow pour inclure le scraping automatique
+name: ⏰ Extraction + Prix Automatique
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # Toutes les 4 heures
+  workflow_dispatch:
+    inputs:
+      include_prices:
+        description: "Inclure le scraping des prix"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  complete_extraction:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Pipeline Complet sur AlwaysData
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.AD_HOST }}
+        username: ${{ secrets.AD_USER }}
+        key: ${{ secrets.AD_SSH_KEY }}
+        script: |
+          cd ~/game-extraction
+          
+          # Variables d'environnement
+          export DB_HOST="${{ secrets.DB_HOST }}"
+          export DB_USER="${{ secrets.DB_USER }}"
+          export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+          export DB_NAME="${{ secrets.DB_NAME }}"
+          export RAWG_API_KEY="${{ secrets.RAWG_API_KEY }}"
+          export DISCORD_WEBHOOK="${{ secrets.DISCORD_WEBHOOK }}"
+          export LOG_LEVEL="INFO"
+          export HEADLESS_MODE="true"
+          export SCRAPING_ENABLED="true"
+          
+          echo "🚀 Lancement du pipeline complet..."
+          python3 scripts/run_complete_pipeline.py
+          
+          echo "📊 État final de la base :"
+          python3 -c "
+          import mysql.connector
+          conn = mysql.connector.connect(
+              host='${{ secrets.DB_HOST }}',
+              user='${{ secrets.DB_USER }}', 
+              password='${{ secrets.DB_PASSWORD }}',
+              database='${{ secrets.DB_NAME }}'
+          )
+          cursor = conn.cursor()
+          
+          cursor.execute('SELECT COUNT(*) FROM games')
+          total_games = cursor.fetchone()[0]
+          
+          cursor.execute('SELECT COUNT(*) FROM best_price_pc')
+          total_prices = cursor.fetchone()[0]
+          
+          cursor.execute('SELECT last_page FROM api_state WHERE id = 1')
+          result = cursor.fetchone()
+          last_page = result[0] if result else 0
+          
+          print(f'🎮 Jeux totaux: {total_games}')
+          print(f'💰 Prix totaux: {total_prices}') 
+          print(f'📄 Dernière page: {last_page}')
+          
+          if total_games > 0:
+              ratio = (total_prices / total_games) * 100
+              print(f'📈 Couverture: {ratio:.1f}%')
+          
+          conn.close()
+          "
