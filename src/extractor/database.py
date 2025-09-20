@@ -54,7 +54,7 @@ class DatabaseManager:
             
             insert_query = """
                 INSERT INTO games (game_id_rawg, title, release_date, genres, platforms, 
-                                 rating, metacritic, background_image, last_update)
+                                 rating, metacritic, last_update)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     title = VALUES(title),
@@ -66,7 +66,7 @@ class DatabaseManager:
                 data.append([
                     row.get('game_id_rawg'), row.get('title'), row.get('release_date'),
                     row.get('genres'), row.get('platforms'), row.get('rating'),
-                    row.get('metacritic'), row.get('background_image'), row.get('last_update')
+                    row.get('metacritic'), row.get('last_update')
                 ])
             
             cursor.executemany(insert_query, data)
