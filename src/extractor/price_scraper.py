@@ -1,6 +1,5 @@
-
 """
-💰 Price Scraper avec matching TF-IDF intelligent
+💰 Price Scraper RÉEL avec TF-IDF pour DLCompare
 """
 
 import pandas as pd
@@ -16,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 logger = logging.getLogger(__name__)
 
-# Import optionnel de Selenium
+# Import Selenium
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
@@ -27,9 +26,9 @@ try:
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
-    logger.warning("Selenium non disponible - scraping désactivé")
+    logger.error("❌ Selenium requis pour le vrai scraping")
 
-# Import optionnel de scikit-learn pour TF-IDF
+# Import TF-IDF
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -37,10 +36,9 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    logger.warning("scikit-learn non disponible - TF-IDF désactivé")
 
 class GameTitleMatcher:
-    """Matcher de titres de jeux utilisant TF-IDF"""
+    """Matcher TF-IDF pour titres de jeux"""
     
     def __init__(self, similarity_threshold: float = 0.6):
         self.similarity_threshold = similarity_threshold
@@ -54,10 +52,8 @@ class GameTitleMatcher:
                 token_pattern=r'\b[a-zA-Z][a-zA-Z0-9]*\b'
             )
             self.enabled = True
-            logger.info("TF-IDF matcher activé")
         else:
             self.enabled = False
-            logger.warning("TF-IDF désactivé - sklearn non disponible")
     
     def normalize_title(self, title: str) -> str:
         """Normalise un titre de jeu"""
@@ -66,33 +62,29 @@ class GameTitleMatcher:
         
         normalized = title.lower()
         
-        # Supprimer les éditions et versions
-        normalized = re.sub(r'\b(goty|game of the year|ultimate|deluxe|premium|collector|special|limited|director\'s cut)\b', '', normalized)
-        normalized = re.sub(r'\b(edition|version|remaster|remastered|hd|4k|enhanced|definitive)\b', '', normalized)
-        normalized = re.sub(r'\b(pack|bundle|collection|anthology|trilogy)\b', '', normalized)
+        # Supprimer éditions et versions
+        normalized = re.sub(r'\b(goty|ultimate|deluxe|premium|collector|special|limited)\b', '', normalized)
+        normalized = re.sub(r'\b(edition|version|remaster|hd|4k|enhanced|definitive)\b', '', normalized)
+        normalized = re.sub(r'\b(pack|bundle|collection|anthology)\b', '', normalized)
         
-        # Supprimer plateformes et années
+        # Supprimer plateformes
         normalized = re.sub(r'\b(pc|ps4|ps5|xbox|nintendo|switch|steam)\b', '', normalized)
         normalized = re.sub(r'\(\d{4}\)', '', normalized)
         
-        # Nettoyer caractères spéciaux
+        # Nettoyer
         normalized = re.sub(r'[^\w\s]', ' ', normalized)
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         
         return normalized
     
     def find_best_match(self, search_title: str, candidate_titles: List[str]) -> Tuple[Optional[int], float]:
-        """Trouve le meilleur match avec TF-IDF ou fallback"""
+        """Trouve le meilleur match avec TF-IDF"""
         if not search_title or not candidate_titles:
             return None, 0.0
         
-        if self.enabled:
-            return self._find_best_match_tfidf(search_title, candidate_titles)
-        else:
-            return self._find_best_match_simple(search_title, candidate_titles)
-    
-    def _find_best_match_tfidf(self, search_title: str, candidate_titles: List[str]) -> Tuple[Optional[int], float]:
-        """Matching avec TF-IDF"""
+        if not self.enabled:
+            return self._simple_match(search_title, candidate_titles)
+        
         normalized_search = self.normalize_title(search_title)
         normalized_candidates = [self.normalize_title(title) for title in candidate_titles]
         
@@ -110,8 +102,6 @@ class GameTitleMatcher:
             best_score = similarities[best_idx]
             original_idx = valid_candidates[best_idx][0]
             
-            logger.debug(f"TF-IDF: '{search_title}' -> '{candidate_titles[original_idx]}' ({best_score:.3f})")
-            
             if best_score >= self.similarity_threshold:
                 return original_idx, best_score
             else:
@@ -119,9 +109,9 @@ class GameTitleMatcher:
                 
         except Exception as e:
             logger.error(f"Erreur TF-IDF: {e}")
-            return self._find_best_match_simple(search_title, candidate_titles)
+            return self._simple_match(search_title, candidate_titles)
     
-    def _find_best_match_simple(self, search_title: str, candidate_titles: List[str]) -> Tuple[Optional[int], float]:
+    def _simple_match(self, search_title: str, candidate_titles: List[str]) -> Tuple[Optional[int], float]:
         """Matching simple par mots-clés"""
         normalized_search = self.normalize_title(search_title).lower()
         search_words = set(normalized_search.split())
@@ -134,7 +124,6 @@ class GameTitleMatcher:
             candidate_words = set(normalized_candidate.split())
             
             if search_words and candidate_words:
-                # Jaccard similarity
                 intersection = len(search_words.intersection(candidate_words))
                 union = len(search_words.union(candidate_words))
                 score = intersection / union if union > 0 else 0.0
@@ -143,50 +132,28 @@ class GameTitleMatcher:
                     best_score = score
                     best_idx = i
         
-        logger.debug(f"Simple: '{search_title}' -> best score {best_score:.3f}")
-        
-        if best_score >= 0.3:  # Seuil plus bas pour matching simple
+        if best_score >= 0.3:
             return best_idx, best_score
         else:
             return None, best_score
 
-class PriceScraper:
-    """Scraper de prix avec TF-IDF"""
+class RealPriceScraper:
+    """Scraper RÉEL pour DLCompare avec TF-IDF"""
     
     def __init__(self):
-        try:
-            from utils.config import ConfigManager
-            config = ConfigManager()
-            scraping_config = config.get_scraping_config()
-        except ImportError:
-            scraping_config = self._get_config_from_env()
-        
-        self.enabled = scraping_config.get('enabled', True) and SELENIUM_AVAILABLE
-        self.max_games = scraping_config.get('max_games_per_session', 5)  # Réduit pour test
-        self.delay = scraping_config.get('delay_between_requests', 3)
-        self.headless = scraping_config.get('headless', True)
-        
-        # Initialiser le matcher
+        self.enabled = SELENIUM_AVAILABLE
+        self.max_games = 5  # Commencer petit
+        self.delay = 3
+        self.headless = True
         self.title_matcher = GameTitleMatcher(similarity_threshold=0.6)
         
         if not SELENIUM_AVAILABLE:
-            self.enabled = False
-            logger.warning("Scraping désactivé - Selenium non disponible")
+            logger.error("❌ Selenium requis pour le scraping réel")
         
-        tfidf_status = "✅" if self.title_matcher.enabled else "❌"
-        scraping_status = "✅" if self.enabled else "❌"
-        logger.info(f"PriceScraper initialisé - TF-IDF: {tfidf_status}, Scraping: {scraping_status}")
-    
-    def _get_config_from_env(self) -> Dict[str, Any]:
-        return {
-            'enabled': os.getenv('SCRAPING_ENABLED', 'true').lower() == 'true',
-            'max_games_per_session': int(os.getenv('MAX_GAMES_SCRAPING', '5')),
-            'delay_between_requests': float(os.getenv('SCRAPING_DELAY', '3.0')),
-            'headless': os.getenv('HEADLESS_MODE', 'true').lower() == 'true'
-        }
+        logger.info(f"RealPriceScraper - TF-IDF: {'✅' if self.title_matcher.enabled else '❌'}")
     
     def _setup_driver(self):
-        """Configure le driver Selenium"""
+        """Configure Chrome pour DLCompare"""
         if not SELENIUM_AVAILABLE:
             return None
         
@@ -195,115 +162,278 @@ class PriceScraper:
         if self.headless:
             options.add_argument('--headless=new')
         
+        # Configuration robuste
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--disable-extensions')
+        options.add_argument('--disable-images')
+        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
         
         try:
             driver = webdriver.Chrome(options=options)
-            driver.set_page_load_timeout(10)
-            driver.implicitly_wait(3)
+            driver.set_page_load_timeout(20)
+            driver.implicitly_wait(5)
             return driver
         except Exception as e:
             logger.error(f"Erreur création driver: {e}")
             return None
     
-    def scrape_prices(self, games_df: pd.DataFrame) -> pd.DataFrame:
-        """Scrape les prix avec TF-IDF (mode simulation pour test)"""
-        if games_df.empty:
-            logger.info("Aucun jeu à scraper")
-            return pd.DataFrame(columns=['game_id_rawg', 'title', 'platform', 'price', 'shop', 'url', 'last_update', 'similarity_score'])
-        
-        logger.info(f"🔍 Scraping simulation pour {len(games_df)} jeux (TF-IDF: {'✅' if self.title_matcher.enabled else '❌'})")
-        
-        results = []
-        
-        for index, game_row in games_df.head(self.max_games).iterrows():
-            title = game_row.get('title', '').strip()
-            game_id = game_row.get('game_id_rawg')
+    def _search_game_on_dlcompare(self, driver, title: str) -> Tuple[Optional[str], float]:
+        """Recherche un jeu sur DLCompare et trouve le meilleur match"""
+        try:
+            # Nettoyer le titre pour la recherche
+            clean_title = self.title_matcher.normalize_title(title)
+            search_query = clean_title.replace(' ', '+')
+            search_url = f"https://www.dlcompare.fr/search?q={search_query}"
             
-            if not title:
-                continue
+            logger.info(f"🔍 Recherche: {title} -> {search_url}")
             
-            logger.info(f"🎮 [{index + 1}] Test matching: {title}")
+            driver.get(search_url)
+            time.sleep(3)
             
-            # Simuler des candidats de recherche
-            candidates = [
-                title,
-                f"{title} Ultimate Edition",
-                f"{title} Remastered",
-                "Jeu Complètement Différent"
+            # Chercher les résultats de jeux
+            try:
+                # Différents sélecteurs possibles pour DLCompare
+                game_elements = driver.find_elements(By.CSS_SELECTOR, ".search-result, .game-item, .product-item")
+                
+                if not game_elements:
+                    # Essayer d'autres sélecteurs
+                    game_elements = driver.find_elements(By.CSS_SELECTOR, "h3 a, .title a, .name a")
+                
+                if not game_elements:
+                    logger.warning(f"Aucun résultat trouvé pour: {title}")
+                    return None, 0.0
+                
+                # Extraire les titres et URLs
+                candidates = []
+                for element in game_elements[:10]:  # Limiter aux 10 premiers
+                    try:
+                        if element.tag_name == 'a':
+                            game_title = element.text.strip()
+                            game_url = element.get_attribute('href')
+                        else:
+                            link = element.find_element(By.TAG_NAME, 'a')
+                            game_title = link.text.strip()
+                            game_url = link.get_attribute('href')
+                        
+                        if game_title and game_url:
+                            candidates.append((game_title, game_url))
+                            
+                    except Exception as e:
+                        logger.debug(f"Erreur extraction candidat: {e}")
+                        continue
+                
+                if not candidates:
+                    logger.warning(f"Aucun candidat valide pour: {title}")
+                    return None, 0.0
+                
+                # Utiliser TF-IDF pour trouver le meilleur match
+                candidate_titles = [title for title, _ in candidates]
+                best_idx, similarity_score = self.title_matcher.find_best_match(title, candidate_titles)
+                
+                if best_idx is not None:
+                    best_title, best_url = candidates[best_idx]
+                    logger.info(f"✅ Match trouvé: '{best_title}' (score: {similarity_score:.3f})")
+                    return best_url, similarity_score
+                else:
+                    logger.info(f"❌ Aucun match suffisant (meilleur score: {similarity_score:.3f})")
+                    return None, similarity_score
+                    
+            except Exception as e:
+                logger.error(f"Erreur extraction résultats: {e}")
+                return None, 0.0
+                
+        except Exception as e:
+            logger.error(f"Erreur recherche DLCompare: {e}")
+            return None, 0.0
+    
+    def _extract_price_from_game_page(self, driver, game_url: str) -> Dict[str, Any]:
+        """Extrait le prix depuis la page du jeu"""
+        try:
+            # Aller sur la page PC du jeu
+            if '#pc' not in game_url:
+                pc_url = f"{game_url}#pc"
+            else:
+                pc_url = game_url
+            
+            driver.get(pc_url)
+            time.sleep(2)
+            
+            # Chercher le prix (plusieurs sélecteurs possibles)
+            price_selectors = [
+                ".lowPrice",
+                ".best-price",
+                ".price-value",
+                ".price",
+                "[data-price]"
             ]
             
-            # Tester le matching TF-IDF
-            best_idx, similarity_score = self.title_matcher.find_best_match(title, candidates)
+            price = None
+            for selector in price_selectors:
+                try:
+                    price_element = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    price = price_element.text.strip()
+                    if price:
+                        break
+                except TimeoutException:
+                    continue
             
-            # Simuler un résultat
-            base_result = {
-                'game_id_rawg': game_id,
-                'title': title,
-                'platform': 'PC',
-                'price': f"{15 + (game_id % 40)}.99€" if best_idx is not None else None,
-                'shop': 'TestShop' if best_idx is not None else None,
-                'url': f'https://example.com/game/{game_id}' if best_idx is not None else None,
-                'last_update': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'similarity_score': similarity_score
+            # Chercher la boutique
+            shop_selectors = [
+                ".shop span",
+                ".merchant",
+                ".store-name",
+                ".shop-name"
+            ]
+            
+            shop = None
+            for selector in shop_selectors:
+                try:
+                    shop_element = driver.find_element(By.CSS_SELECTOR, selector)
+                    shop = shop_element.text.strip()
+                    if shop:
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            if not shop:
+                shop = "DLCompare"
+            
+            return {
+                'price': price,
+                'shop': shop,
+                'url': pc_url
             }
             
-            if best_idx is not None:
-                matched_title = candidates[best_idx]
-                quality = "🔥" if similarity_score >= 0.8 else "✅" if similarity_score >= 0.6 else "⚠️"
-                logger.info(f"{quality} Match trouvé: '{matched_title}' (score: {similarity_score:.3f})")
-            else:
-                logger.info(f"❌ Aucun match suffisant (meilleur score: {similarity_score:.3f})")
-            
-            results.append(base_result)
-            
-            # Petite pause simulée
-            time.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Erreur extraction prix: {e}")
+            return {
+                'price': None,
+                'shop': None,
+                'url': game_url
+            }
+    
+    def scrape_prices(self, games_df: pd.DataFrame) -> pd.DataFrame:
+        """Scraping RÉEL avec TF-IDF"""
+        if not self.enabled or games_df.empty:
+            logger.warning("Scraping désactivé ou aucun jeu")
+            return pd.DataFrame(columns=['game_id_rawg', 'title', 'platform', 'price', 'shop', 'url', 'last_update', 'similarity_score'])
         
+        logger.info(f"🔍 SCRAPING RÉEL pour {len(games_df)} jeux")
+        
+        results = []
+        driver = None
+        
+        try:
+            driver = self._setup_driver()
+            if not driver:
+                logger.error("Impossible de créer le driver")
+                return pd.DataFrame(columns=['game_id_rawg', 'title', 'platform', 'price', 'shop', 'url', 'last_update', 'similarity_score'])
+            
+            for index, game_row in games_df.head(self.max_games).iterrows():
+                title = game_row.get('title', '').strip()
+                game_id = game_row.get('game_id_rawg')
+                
+                if not title:
+                    continue
+                
+                logger.info(f"🎮 [{index + 1}/{len(games_df)}] Scraping: {title}")
+                
+                try:
+                    # Rechercher le jeu
+                    game_url, similarity_score = self._search_game_on_dlcompare(driver, title)
+                    
+                    base_result = {
+                        'game_id_rawg': game_id,
+                        'title': title,
+                        'platform': 'PC',
+                        'price': None,
+                        'shop': None,
+                        'url': None,
+                        'last_update': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'similarity_score': similarity_score
+                    }
+                    
+                    if game_url and similarity_score >= self.title_matcher.similarity_threshold:
+                        # Extraire le prix
+                        price_info = self._extract_price_from_game_page(driver, game_url)
+                        base_result.update(price_info)
+                        
+                        if price_info.get('price'):
+                            logger.info(f"✅ Prix trouvé: {price_info['price']} chez {price_info['shop']}")
+                        else:
+                            logger.info(f"⚠️ Jeu trouvé mais prix indisponible")
+                    else:
+                        logger.info(f"❌ Aucun match suffisant")
+                    
+                    results.append(base_result)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Erreur pour {title}: {e}")
+                    results.append({
+                        'game_id_rawg': game_id,
+                        'title': title,
+                        'platform': 'PC',
+                        'price': None,
+                        'shop': None,
+                        'url': None,
+                        'last_update': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'similarity_score': 0.0
+                    })
+                
+                # Pause entre les jeux
+                if index < len(games_df) - 1:
+                    logger.info(f"⏸️ Pause de {self.delay}s...")
+                    time.sleep(self.delay)
+                    
+        except Exception as e:
+            logger.error(f"Erreur générale scraping: {e}")
+            
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                    logger.info("🔒 Driver fermé")
+                except:
+                    pass
+        
+        # Statistiques finales
         successful = len([r for r in results if r.get('price')])
         avg_similarity = sum(r.get('similarity_score', 0) for r in results) / max(len(results), 1)
         
-        logger.info(f"🎯 Simulation terminée: {successful}/{len(results)} prix simulés (similarité moy: {avg_similarity:.3f})")
+        logger.info(f"🎯 Scraping RÉEL terminé: {successful}/{len(results)} prix trouvés (similarité moy: {avg_similarity:.3f})")
         
         return pd.DataFrame(results)
-    
-    def test_scraping(self) -> bool:
-        """Test du scraper"""
-        logger.info("🧪 Test du scraper TF-IDF")
-        
-        test_games = pd.DataFrame([
-            {'game_id_rawg': 1, 'title': 'Cyberpunk 2077'},
-            {'game_id_rawg': 2, 'title': 'The Witcher 3'}
-        ])
-        
-        results = self.scrape_prices(test_games)
-        
-        success = not results.empty
-        
-        if success:
-            logger.info("✅ Test scraper réussi")
-        else:
-            logger.warning("❌ Test scraper échoué")
-        
-        return success
-
-# Alias pour compatibilité
-PriceScraperTFIDF = PriceScraper
 
 def main():
-    """Test principal"""
-    print("🧪 Test du module PriceScraper avec TF-IDF")
+    """Test du scraper réel"""
+    scraper = RealPriceScraper()
     
-    scraper = PriceScraper()
+    import pandas as pd
+    test_games = pd.DataFrame([
+        {'game_id_rawg': 3498, 'title': 'Grand Theft Auto V'},
+        {'game_id_rawg': 4200, 'title': 'Portal 2'},
+        {'game_id_rawg': 28, 'title': 'Red Dead Redemption 2'}
+    ])
     
-    print(f"TF-IDF enabled: {scraper.title_matcher.enabled}")
-    print(f"Scraper enabled: {scraper.enabled}")
+    print("🧪 Test du scraper RÉEL")
+    results = scraper.scrape_prices(test_games)
     
-    success = scraper.test_scraping()
-    print(f"Test result: {success}")
+    print("\n📊 Résultats:")
+    for _, row in results.iterrows():
+        similarity = row.get('similarity_score', 0)
+        price = row.get('price', 'N/A')
+        shop = row.get('shop', 'N/A')
+        
+        quality = "🔥" if similarity >= 0.8 else "✅" if similarity >= 0.6 else "⚠️"
+        
+        print(f"{quality} {row['title']}")
+        print(f"   Prix: {price} chez {shop}")
+        print(f"   Similarité: {similarity:.3f}")
+        print()
 
 if __name__ == "__main__":
     main()
