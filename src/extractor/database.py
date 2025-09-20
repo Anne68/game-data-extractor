@@ -1,5 +1,5 @@
 """
-Module de gestion de la base de données MySQL - Version corrigée
+DatabaseManager amélioré avec support TF-IDF
 """
 
 import mysql.connector
@@ -37,9 +37,6 @@ class DatabaseManager:
             return True
         return False
     
-    def setup_tables(self):
-        return True
-    
     def save_games(self, games_df):
         if games_df.empty:
             return True
@@ -55,7 +52,7 @@ class DatabaseManager:
             insert_query = """
                 INSERT INTO games (game_id_rawg, title, release_date, genres, platforms, 
                                  rating, metacritic, last_update)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     title = VALUES(title),
                     last_update = VALUES(last_update)
@@ -82,29 +79,8 @@ class DatabaseManager:
                 cursor.close()
                 conn.close()
     
-    def get_games_for_price_update(self, limit=50):
-        conn = self.get_connection()
-        if not conn:
-            return pd.DataFrame()
-        
-        try:
-            query = """
-                SELECT DISTINCT g.game_id_rawg, g.title
-                FROM games g
-                LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
-                WHERE p.game_id_rawg IS NULL
-                ORDER BY g.rating DESC
-                LIMIT %s
-            """
-            return pd.read_sql(query, conn, params=[limit])
-        except Error as e:
-            logger.error(f"Erreur récupération: {e}")
-            return pd.DataFrame()
-        finally:
-            if conn.is_connected():
-                conn.close()
-    
     def save_prices(self, prices_df):
+        """Sauvegarde les prix avec scores de similarité TF-IDF"""
         if prices_df.empty:
             return True
         
@@ -116,30 +92,145 @@ class DatabaseManager:
             cursor = conn.cursor()
             prices_df = prices_df.replace({np.nan: None})
             
-            insert_query = """
-                INSERT INTO best_price_pc (title, best_price_PC, best_shop_PC, site_url_PC, last_update, game_id_rawg)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    best_price_PC = VALUES(best_price_PC),
-                    best_shop_PC = VALUES(best_shop_PC),
-                    last_update = VALUES(last_update)
-            """
+            # Vérifier si la colonne similarity_score existe
+            cursor.execute("SHOW COLUMNS FROM best_price_pc LIKE 'similarity_score'")
+            has_similarity_column = cursor.fetchone() is not None
+            
+            if has_similarity_column:
+                insert_query = """
+                    INSERT INTO best_price_pc (title, best_price_PC, best_shop_PC, site_url_PC, 
+                                             last_update, game_id_rawg, similarity_score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        best_price_PC = VALUES(best_price_PC),
+                        best_shop_PC = VALUES(best_shop_PC),
+                        last_update = VALUES(last_update),
+                        similarity_score = VALUES(similarity_score)
+                """
+            else:
+                # Version sans similarity_score pour compatibilité
+                insert_query = """
+                    INSERT INTO best_price_pc (title, best_price_PC, best_shop_PC, site_url_PC, 
+                                             last_update, game_id_rawg)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        best_price_PC = VALUES(best_price_PC),
+                        best_shop_PC = VALUES(best_shop_PC),
+                        last_update = VALUES(last_update)
+                """
             
             data = []
             for _, row in prices_df.iterrows():
-                data.append([
+                base_data = [
                     row.get('title'), row.get('price'), row.get('shop'),
                     row.get('url'), row.get('last_update'), row.get('game_id_rawg')
-                ])
+                ]
+                
+                if has_similarity_column:
+                    base_data.append(row.get('similarity_score'))
+                
+                data.append(base_data)
             
             cursor.executemany(insert_query, data)
             conn.commit()
-            logger.info(f"✅ {len(prices_df)} prix sauvegardés")
+            
+            # Statistiques de qualité
+            if has_similarity_column and 'similarity_score' in prices_df.columns:
+                avg_similarity = prices_df['similarity_score'].mean()
+                high_quality = len(prices_df[prices_df['similarity_score'] >= 0.8])
+                logger.info(f"✅ {len(prices_df)} prix sauvegardés (similarité moy: {avg_similarity:.3f}, {high_quality} haute qualité)")
+            else:
+                logger.info(f"✅ {len(prices_df)} prix sauvegardés")
+            
             return True
             
         except Error as e:
             logger.error(f"Erreur sauvegarde prix: {e}")
             return False
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
+    
+    def get_games_for_price_update(self, limit=50, min_similarity=None):
+        """Récupère les jeux sans prix, avec option de filtrage par similarité"""
+        conn = self.get_connection()
+        if not conn:
+            return pd.DataFrame()
+        
+        try:
+            if min_similarity:
+                # Exclure les jeux avec une mauvaise similarité précédente
+                query = """
+                    SELECT DISTINCT g.game_id_rawg, g.title
+                    FROM games g
+                    LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
+                    WHERE p.game_id_rawg IS NULL 
+                       OR (p.similarity_score IS NOT NULL AND p.similarity_score < %s)
+                    ORDER BY g.rating DESC
+                    LIMIT %s
+                """
+                return pd.read_sql(query, conn, params=[min_similarity, limit])
+            else:
+                query = """
+                    SELECT DISTINCT g.game_id_rawg, g.title
+                    FROM games g
+                    LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
+                    WHERE p.game_id_rawg IS NULL
+                    ORDER BY g.rating DESC
+                    LIMIT %s
+                """
+                return pd.read_sql(query, conn, params=[limit])
+                
+        except Error as e:
+            logger.error(f"Erreur récupération: {e}")
+            return pd.DataFrame()
+        finally:
+            if conn.is_connected():
+                conn.close()
+    
+    def get_similarity_statistics(self):
+        """Récupère les statistiques de similarité TF-IDF"""
+        conn = self.get_connection()
+        if not conn:
+            return {}
+        
+        try:
+            cursor = conn.cursor()
+            stats = {}
+            
+            # Vérifier si la colonne existe
+            cursor.execute("SHOW COLUMNS FROM best_price_pc LIKE 'similarity_score'")
+            if not cursor.fetchone():
+                return {'similarity_support': False}
+            
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_with_similarity,
+                    AVG(similarity_score) as avg_similarity,
+                    COUNT(CASE WHEN similarity_score >= 0.8 THEN 1 END) as high_quality,
+                    COUNT(CASE WHEN similarity_score >= 0.6 AND similarity_score < 0.8 THEN 1 END) as medium_quality,
+                    COUNT(CASE WHEN similarity_score < 0.6 THEN 1 END) as low_quality
+                FROM best_price_pc 
+                WHERE similarity_score IS NOT NULL
+            """)
+            
+            result = cursor.fetchone()
+            if result:
+                stats.update({
+                    'similarity_support': True,
+                    'total_with_similarity': result[0],
+                    'avg_similarity': float(result[1]) if result[1] else 0.0,
+                    'high_quality_matches': result[2],
+                    'medium_quality_matches': result[3],
+                    'low_quality_matches': result[4]
+                })
+            
+            return stats
+            
+        except Error as e:
+            logger.error(f"Erreur stats similarité: {e}")
+            return {'similarity_support': False}
         finally:
             if conn.is_connected():
                 cursor.close()
@@ -164,6 +255,10 @@ class DatabaseManager:
             last_update = cursor.fetchone()[0]
             stats['last_extraction'] = last_update.strftime('%Y-%m-%d %H:%M:%S') if last_update else None
             
+            # Ajouter les stats de similarité
+            similarity_stats = self.get_similarity_statistics()
+            stats.update(similarity_stats)
+            
             return stats
         except Error as e:
             return {}
@@ -171,38 +266,4 @@ class DatabaseManager:
             if conn.is_connected():
                 cursor.close()
                 conn.close()
-    
-    def get_detailed_stats(self):
-        stats = self.get_stats()
-        conn = self.get_connection()
-        if not conn:
-            return stats
-        
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT last_page FROM api_state WHERE id = 1")
-            result = cursor.fetchone()
-            stats['last_api_page'] = result[0] if result else 65
-            
-            cursor.execute("""
-                SELECT COUNT(DISTINCT g.game_id_rawg)
-                FROM games g
-                LEFT JOIN best_price_pc p ON g.game_id_rawg = p.game_id_rawg
-                WHERE p.game_id_rawg IS NULL
-            """)
-            stats['games_without_prices'] = cursor.fetchone()[0]
-            
-            stats['db_size_mb'] = 0
-            stats['log_files'] = 0
-            
-            return stats
-        except Error as e:
-            return stats
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def optimize_database(self):
-        return True
+
