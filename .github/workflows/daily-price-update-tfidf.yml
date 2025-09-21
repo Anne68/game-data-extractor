@@ -1,5 +1,3 @@
-# Modifier le workflow de mise à jour quotidienne
-
 name: 🧠 Mise à jour quotidienne TF-IDF (3h du matin)
 on:
   schedule:
@@ -47,76 +45,95 @@ jobs:
           # Installer scikit-learn si nécessaire
           python3 -m pip install --user scikit-learn>=1.3.0
           
-          # Mettre à jour la structure de base
-          python3 scripts/upgrade_database_similarity.py
+          # Mettre à jour la structure de base si le script existe
+          if [ -f scripts/upgrade_database_similarity.py ]; then
+            python3 scripts/upgrade_database_similarity.py
+          else
+            echo "⚠️ Script de mise à jour de base non trouvé, continuation..."
+          fi
           
           # Notification de début avec TF-IDF
           python3 -c "
           import requests
+          import sys
           from datetime import datetime
           
           webhook_url = '${{ secrets.DISCORD_WEBHOOK }}'
           
-          payload = {
-              'embeds': [{
-                  'title': '🧠 Mise à jour TF-IDF - DÉBUT',
-                  'description': f'Lancement de la mise à jour avec matching intelligent TF-IDF\n\n**Seuil de similarité:** $SIMILARITY_THRESHOLD\n**Mode:** Recherche de correspondances précises',
-                  'color': 9936031,  # Violet pour TF-IDF
-                  'timestamp': datetime.now().isoformat(),
-                  'footer': {'text': 'Game Data Extractor • TF-IDF Enhanced'}
-              }]
-          }
-          
-          requests.post(webhook_url, json=payload)
+          if webhook_url:
+              try:
+                  payload = {
+                      'embeds': [{
+                          'title': '🧠 Mise à jour TF-IDF - DÉBUT',
+                          'description': f'Lancement de la mise à jour avec matching intelligent TF-IDF\n\n**Seuil de similarité:** $SIMILARITY_THRESHOLD\n**Mode:** Recherche de correspondances précises',
+                          'color': 9936031,
+                          'timestamp': datetime.now().isoformat(),
+                          'footer': {'text': 'Game Data Extractor • TF-IDF Enhanced'}
+                      }]
+                  }
+                  
+                  response = requests.post(webhook_url, json=payload, timeout=10)
+                  response.raise_for_status()
+                  print('✅ Notification Discord envoyée')
+              except Exception as e:
+                  print(f'⚠️ Erreur notification Discord: {e}')
+          else:
+              print('⚠️ Webhook Discord non configuré')
           "
           
           # Lancer le pipeline TF-IDF
-          python3 scripts/run_complete_pipeline_tfidf.py
+          if [ -f scripts/run_complete_pipeline_tfidf.py ]; then
+            python3 scripts/run_complete_pipeline_tfidf.py
+          else
+            echo "❌ Script TF-IDF non trouvé!"
+            exit 1
+          fi
           
           # Statistiques finales TF-IDF
           python3 -c "
           import mysql.connector
           import requests
+          import sys
           from datetime import datetime
           
-          conn = mysql.connector.connect(
-              host='${{ secrets.DB_HOST }}',
-              user='${{ secrets.DB_USER }}', 
-              password='${{ secrets.DB_PASSWORD }}',
-              database='${{ secrets.DB_NAME }}'
-          )
-          cursor = conn.cursor()
-          
-          # Stats générales
-          cursor.execute('SELECT COUNT(*) FROM games')
-          total_games = cursor.fetchone()[0]
-          
-          cursor.execute('SELECT COUNT(*) FROM best_price_pc')
-          total_prices = cursor.fetchone()[0]
-          
-          # Stats TF-IDF si disponibles
-          cursor.execute('SHOW COLUMNS FROM best_price_pc LIKE \"similarity_score\"')
-          has_similarity = cursor.fetchone() is not None
-          
-          if has_similarity:
-              cursor.execute('''
-                  SELECT 
-                      AVG(similarity_score) as avg_sim,
-                      COUNT(CASE WHEN similarity_score >= 0.8 THEN 1 END) as high_quality,
-                      COUNT(CASE WHEN similarity_score >= 0.6 AND similarity_score < 0.8 THEN 1 END) as medium_quality,
-                      COUNT(CASE WHEN similarity_score < 0.6 THEN 1 END) as low_quality
-                  FROM best_price_pc 
-                  WHERE similarity_score IS NOT NULL
-              ''')
+          try:
+              conn = mysql.connector.connect(
+                  host='${{ secrets.DB_HOST }}',
+                  user='${{ secrets.DB_USER }}', 
+                  password='${{ secrets.DB_PASSWORD }}',
+                  database='${{ secrets.DB_NAME }}'
+              )
+              cursor = conn.cursor()
               
-              sim_stats = cursor.fetchone()
-              avg_sim = sim_stats[0] if sim_stats[0] else 0
-              high_qual = sim_stats[1]
-              med_qual = sim_stats[2] 
-              low_qual = sim_stats[3]
+              # Stats générales
+              cursor.execute('SELECT COUNT(*) FROM games')
+              total_games = cursor.fetchone()[0]
               
-              quality_desc = f'''
-📊 **Statistiques de qualité TF-IDF:**
+              cursor.execute('SELECT COUNT(*) FROM best_price_pc')
+              total_prices = cursor.fetchone()[0]
+              
+              # Stats TF-IDF si disponibles
+              cursor.execute('SHOW COLUMNS FROM best_price_pc LIKE \"similarity_score\"')
+              has_similarity = cursor.fetchone() is not None
+              
+              if has_similarity:
+                  cursor.execute('''
+                      SELECT 
+                          AVG(similarity_score) as avg_sim,
+                          COUNT(CASE WHEN similarity_score >= 0.8 THEN 1 END) as high_quality,
+                          COUNT(CASE WHEN similarity_score >= 0.6 AND similarity_score < 0.8 THEN 1 END) as medium_quality,
+                          COUNT(CASE WHEN similarity_score < 0.6 THEN 1 END) as low_quality
+                      FROM best_price_pc 
+                      WHERE similarity_score IS NOT NULL
+                  ''')
+                  
+                  sim_stats = cursor.fetchone()
+                  avg_sim = float(sim_stats[0]) if sim_stats[0] else 0
+                  high_qual = sim_stats[1]
+                  med_qual = sim_stats[2] 
+                  low_qual = sim_stats[3]
+                  
+                  quality_desc = f'''📊 **Statistiques de qualité TF-IDF:**
 - Similarité moyenne: **{avg_sim:.3f}**
 - Haute qualité (≥0.8): **{high_qual}** prix
 - Qualité moyenne (0.6-0.8): **{med_qual}** prix  
@@ -125,26 +142,41 @@ jobs:
 🎯 **Performance globale:**
 - Total jeux: **{total_games:,}**
 - Total prix: **{total_prices:,}**
-- Couverture: **{(total_prices/total_games*100 if total_games > 0 else 0):.1f}%**
-              '''
-          else:
-              quality_desc = f'📊 Total: {total_games:,} jeux, {total_prices:,} prix'
-          
-          # Notification finale
-          webhook_url = '${{ secrets.DISCORD_WEBHOOK }}'
-          
-          color = 3066993 if has_similarity and avg_sim >= 0.7 else 15844367
-          
-          payload = {
-              'embeds': [{
-                  'title': '✅ Mise à jour TF-IDF - TERMINÉE',
-                  'description': quality_desc,
-                  'color': color,
-                  'timestamp': datetime.now().isoformat(),
-                  'footer': {'text': 'Game Data Extractor • TF-IDF Enhanced'}
-              }]
-          }
-          
-          requests.post(webhook_url, json=payload)
-          conn.close()
+- Couverture: **{(total_prices/total_games*100 if total_games > 0 else 0):.1f}%**'''
+              else:
+                  avg_sim = 0
+                  quality_desc = f'📊 Total: {total_games:,} jeux, {total_prices:,} prix'
+              
+              # Notification finale
+              webhook_url = '${{ secrets.DISCORD_WEBHOOK }}'
+              
+              if webhook_url:
+                  try:
+                      color = 3066993 if has_similarity and avg_sim >= 0.7 else 15844367
+                      
+                      payload = {
+                          'embeds': [{
+                              'title': '✅ Mise à jour TF-IDF - TERMINÉE',
+                              'description': quality_desc,
+                              'color': color,
+                              'timestamp': datetime.now().isoformat(),
+                              'footer': {'text': 'Game Data Extractor • TF-IDF Enhanced'}
+                          }]
+                      }
+                      
+                      response = requests.post(webhook_url, json=payload, timeout=10)
+                      response.raise_for_status()
+                      print('✅ Notification finale envoyée')
+                  except Exception as e:
+                      print(f'⚠️ Erreur notification finale: {e}')
+              
+              conn.close()
+              print('✅ Pipeline TF-IDF terminé avec succès')
+              
+          except mysql.connector.Error as e:
+              print(f'❌ Erreur MySQL: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'❌ Erreur générale: {e}')
+              sys.exit(1)
           "
