@@ -1,5 +1,4 @@
-# Modifier le workflow pour inclure le scraping automatique
-name: ⏰ Extraction + Prix Automatique
+name: ⏰ Extraction + Prix Automatique (TF-IDF Enhanced)
 on:
   schedule:
     - cron: '0 */4 * * *'   # Toutes les 4 heures
@@ -7,6 +6,11 @@ on:
     inputs:
       include_prices:
         description: "Inclure le scraping des prix"
+        required: false
+        default: true
+        type: boolean
+      use_tfidf:
+        description: "Utiliser le pipeline TF-IDF"
         required: false
         default: true
         type: boolean
@@ -36,37 +40,127 @@ jobs:
           export HEADLESS_MODE="true"
           export SCRAPING_ENABLED="true"
           
+          USE_TFIDF="${{ github.event.inputs.use_tfidf }}"
+          if [ -z "$USE_TFIDF" ]; then
+            USE_TFIDF="true"
+          fi
+          
           echo "🚀 Lancement du pipeline complet..."
-          python3 scripts/run_complete_pipeline.py
+          
+          # Installer scikit-learn pour TF-IDF si nécessaire
+          if [ "$USE_TFIDF" = "true" ]; then
+            echo "📦 Installation scikit-learn pour TF-IDF..."
+            python3 -m pip install --user scikit-learn>=1.3.0
+          fi
+          
+          # Choisir le pipeline approprié
+          if [ "$USE_TFIDF" = "true" ] && [ -f scripts/run_complete_pipeline_tfidf.py ]; then
+            echo "🧠 Utilisation du pipeline TF-IDF..."
+            python3 scripts/run_complete_pipeline_tfidf.py
+          elif [ -f scripts/run_complete_pipeline.py ]; then
+            echo "📊 Utilisation du pipeline standard..."
+            python3 scripts/run_complete_pipeline.py
+          else
+            echo "❌ Aucun pipeline trouvé!"
+            exit 1
+          fi
           
           echo "📊 État final de la base :"
           python3 -c "
           import mysql.connector
-          conn = mysql.connector.connect(
-              host='${{ secrets.DB_HOST }}',
-              user='${{ secrets.DB_USER }}', 
-              password='${{ secrets.DB_PASSWORD }}',
-              database='${{ secrets.DB_NAME }}'
-          )
-          cursor = conn.cursor()
-          
-          cursor.execute('SELECT COUNT(*) FROM games')
-          total_games = cursor.fetchone()[0]
-          
-          cursor.execute('SELECT COUNT(*) FROM best_price_pc')
-          total_prices = cursor.fetchone()[0]
-          
-          cursor.execute('SELECT last_page FROM api_state WHERE id = 1')
-          result = cursor.fetchone()
-          last_page = result[0] if result else 0
-          
-          print(f'🎮 Jeux totaux: {total_games}')
-          print(f'💰 Prix totaux: {total_prices}') 
-          print(f'📄 Dernière page: {last_page}')
-          
-          if total_games > 0:
-              ratio = (total_prices / total_games) * 100
-              print(f'📈 Couverture: {ratio:.1f}%')
-          
-          conn.close()
+          try:
+              conn = mysql.connector.connect(
+                  host='${{ secrets.DB_HOST }}',
+                  user='${{ secrets.DB_USER }}', 
+                  password='${{ secrets.DB_PASSWORD }}',
+                  database='${{ secrets.DB_NAME }}'
+              )
+              cursor = conn.cursor()
+              
+              cursor.execute('SELECT COUNT(*) FROM games')
+              total_games = cursor.fetchone()[0]
+              
+              cursor.execute('SELECT COUNT(*) FROM best_price_pc')
+              total_prices = cursor.fetchone()[0]
+              
+              cursor.execute('SELECT last_page FROM api_state WHERE id = 1')
+              result = cursor.fetchone()
+              last_page = result[0] if result else 0
+              
+              print(f'🎮 Jeux totaux: {total_games}')
+              print(f'💰 Prix totaux: {total_prices}') 
+              print(f'📄 Dernière page: {last_page}')
+              
+              if total_games > 0:
+                  ratio = (total_prices / total_games) * 100
+                  print(f'📈 Couverture: {ratio:.1f}%')
+              
+              # Stats TF-IDF si disponibles
+              cursor.execute('SHOW COLUMNS FROM best_price_pc LIKE \"similarity_score\"')
+              has_similarity = cursor.fetchone() is not None
+              
+              if has_similarity:
+                  cursor.execute('SELECT AVG(similarity_score) FROM best_price_pc WHERE similarity_score IS NOT NULL')
+                  avg_sim = cursor.fetchone()[0]
+                  if avg_sim:
+                      print(f'🧠 Similarité TF-IDF moyenne: {float(avg_sim):.3f}')
+              
+              conn.close()
+              
+          except Exception as e:
+              print(f'❌ Erreur lors de la récupération des stats: {e}')
           "
+    
+    # Notification de succès
+    - name: 📢 Notification Discord - Succès
+      if: success()
+      run: |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+        USE_TFIDF="${{ github.event.inputs.use_tfidf }}"
+        if [ -z "$USE_TFIDF" ]; then
+          USE_TFIDF="true"
+        fi
+        
+        PIPELINE_TYPE="TF-IDF Enhanced"
+        if [ "$USE_TFIDF" != "true" ]; then
+          PIPELINE_TYPE="Standard"
+        fi
+        
+        cat > /tmp/discord_success.json << EOF
+        {
+          "embeds": [{
+            "title": "✅ Pipeline Automatique Réussi",
+            "description": "**Pipeline d'extraction terminé avec succès**\n\n📊 **Détails:**\n• Type: $PIPELINE_TYPE\n• Mode: Extraction + Prix automatique\n• Serveur: AlwaysData",
+            "color": 3066993,
+            "timestamp": "$CURRENT_TIME",
+            "footer": {"text": "GitHub Actions • Game Data Extractor"}
+          }]
+        }
+        EOF
+        
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/discord_success.json || echo "⚠️ Notification Discord échouée"
+    
+    # Notification d'échec
+    - name: 📢 Notification Discord - Échec
+      if: failure()
+      run: |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        
+        cat > /tmp/discord_failure.json << EOF
+        {
+          "embeds": [{
+            "title": "❌ Pipeline Automatique Échoué",
+            "description": "**Erreur lors de l'exécution du pipeline**\n\n⚠️ **Action requise:**\nVérifiez les logs dans GitHub Actions\n\n🔗 **Lien:** [Voir les détails]($RUN_URL)",
+            "color": 15158332,
+            "timestamp": "$CURRENT_TIME",
+            "footer": {"text": "GitHub Actions • Game Data Extractor"}
+          }]
+        }
+        EOF
+        
+        curl -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+        -H "Content-Type: application/json" \
+        --data-binary @/tmp/discord_failure.json || echo "⚠️ Notification Discord échouée"
