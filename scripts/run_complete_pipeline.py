@@ -1,6 +1,6 @@
-
+#!/usr/bin/env python3
 """
-Pipeline complet avec TF-IDF et statistiques de qualité
+🧠 Pipeline complet avec TF-IDF et statistiques de qualité
 """
 
 import os
@@ -40,7 +40,7 @@ def send_discord_notification(title, description, color=3066993, fields=None):
         return False
 
 def main():
-    print("🚀 Pipeline complet avec TF-IDF")
+    print("🧠 Pipeline complet avec TF-IDF")
     
     # Notification de début
     send_discord_notification(
@@ -54,13 +54,13 @@ def main():
     try:
         from extractor.rawg_extractor import RawgExtractor
         from extractor.database import DatabaseManager
-        from extractor.price_scraper import PriceScraperTFIDF
+        from extractor.price_scraper import PriceScraperTFIDF  # Import corrigé
         
         db = DatabaseManager()
         extractor = RawgExtractor()
         scraper = PriceScraperTFIDF()
         
-        # Stats initiales avec TF-IDF
+        # Stats initiales
         initial_stats = db.get_stats()
         initial_games = initial_stats.get('total_games', 0)
         initial_prices = initial_stats.get('total_prices', 0)
@@ -115,7 +115,6 @@ def main():
             if not prices_df.empty:
                 success = db.save_prices(prices_df)
                 if success:
-                    # Analyser la qualité des nouveaux matchs
                     valid_prices = prices_df[prices_df['price'].notna()]
                     new_prices_count = len(valid_prices)
                     
@@ -125,7 +124,7 @@ def main():
                         
                         print(f"✅ {new_prices_count} prix TF-IDF trouvés (similarité moy: {tfidf_stats['avg_new_similarity']:.3f})")
         
-        # Stats finales avec TF-IDF
+        # Stats finales
         final_stats = db.get_stats()
         final_games = final_stats.get('total_games', 0)
         final_prices = final_stats.get('total_prices', 0)
@@ -135,7 +134,7 @@ def main():
         execution_time = round(time.time() - start_time, 1)
         coverage = (final_prices / final_games * 100) if final_games > 0 else 0
         
-        # Notification de succès avec stats TF-IDF
+        # Notification de succès
         description = f"""🧠 **Pipeline TF-IDF terminé avec succès**
 
 📊 **Résultats:**
